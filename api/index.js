@@ -5,4 +5,5 @@
 const { app } = require('../src/server');
 
 // Export the Express app as a serverless function
+// Vercel will automatically handle the function configuration
 module.exports = app;
