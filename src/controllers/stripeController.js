@@ -5,7 +5,7 @@ const Session = require('../models/Session');
 const Client = require('../models/Client');
 const Therapist = require('../models/Therapist');
 const { asyncHandler } = require('../middlewares/errorHandler');
-const { getPricingTiersForSubscription, getPaymentSplitForUse, getSLPACancellationFee } = require('./pricingController');
+const { getPricingTiersForSubscription, getPaymentSplitForUse, getCancellationFee } = require('./pricingController');
 
 // @desc    Create Stripe checkout session
 // @route   POST /api/stripe/create-checkout-session
@@ -121,8 +121,9 @@ const createPaymentIntent = asyncHandler(async (req, res) => {
   const amount = session.price || session.therapistId.hourlyRate || 100;
   const amountInCents = Math.round(amount * 100);
 
-  // Get payment split
-  const splitConfig = getPaymentSplitForUse();
+  // Get payment split based on therapist credentials
+  const credentialType = session.therapistId.credentials || 'SLP';
+  const splitConfig = getPaymentSplitForUse(credentialType);
   const platformFee = Math.round(amountInCents * (splitConfig.platformFeePercent / 100));
   const therapistFee = amountInCents - platformFee;
 
@@ -209,11 +210,12 @@ const createCancellationPayment = asyncHandler(async (req, res) => {
     });
   }
 
-  // Verify it's an SLPA cancellation
-  if (session.therapistId.credentials !== 'SLPA') {
+  // Verify therapist has valid credentials for cancellation fee
+  const credentialType = session.therapistId.credentials;
+  if (!credentialType || !['SLP', 'SLPA'].includes(credentialType)) {
     return res.status(400).json({
       success: false,
-      message: 'Cancellation fee only applies to SLPA credentials',
+      message: 'Therapist must have valid credentials (SLP or SLPA) for cancellation fee',
     });
   }
 
@@ -238,12 +240,13 @@ const createCancellationPayment = asyncHandler(async (req, res) => {
     });
   }
 
-  // Get cancellation fee
-  const cancellationFee = getSLPACancellationFee();
+  // Get cancellation fee based on therapist credentials
+  const credentialType = session.therapistId.credentials || 'SLPA';
+  const cancellationFee = getCancellationFee(credentialType);
   const amountInCents = Math.round(cancellationFee * 100);
 
-  // Get payment split
-  const splitConfig = getPaymentSplitForUse();
+  // Get payment split based on therapist credentials
+  const splitConfig = getPaymentSplitForUse(credentialType);
   const platformFee = Math.round(amountInCents * (splitConfig.platformFeePercent / 100));
   const therapistFee = amountInCents - platformFee;
 
@@ -392,8 +395,9 @@ const processSessionPayment = asyncHandler(async (req, res) => {
   const amount = session.price || session.therapistId.hourlyRate || 100;
   const amountInCents = Math.round(amount * 100);
 
-  // Get payment split
-  const splitConfig = getPaymentSplitForUse();
+  // Get payment split based on therapist credentials
+  const credentialType = session.therapistId.credentials || 'SLP';
+  const splitConfig = getPaymentSplitForUse(credentialType);
   const platformFee = Math.round(amountInCents * (splitConfig.platformFeePercent / 100));
   const therapistFee = amountInCents - platformFee;
 

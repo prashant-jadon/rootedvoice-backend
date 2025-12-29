@@ -112,6 +112,11 @@ const therapistSchema = new mongoose.Schema({
     type: Boolean,
     default: false,
   },
+  status: {
+    type: String,
+    enum: ['pending', 'inactive', 'active', 'paused'],
+    default: 'pending',
+  },
   stripeAccountId: {
     type: String,
   },
@@ -120,6 +125,43 @@ const therapistSchema = new mongoose.Schema({
     enum: ['SLP', 'SLPA'],
     default: 'SLP',
   },
+  // Compliance documents
+  complianceDocuments: {
+    stateLicense: {
+      number: String,
+      state: String,
+      expirationDate: Date,
+      verified: { type: Boolean, default: false },
+      verifiedAt: Date,
+      verifiedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    },
+    liabilityInsurance: {
+      provider: String,
+      policyNumber: String,
+      expirationDate: Date,
+      verified: { type: Boolean, default: false },
+      verifiedAt: Date,
+      verifiedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    },
+    additionalCredentials: [{
+      name: String,
+      issuer: String,
+      expirationDate: Date,
+      verified: { type: Boolean, default: false },
+      verifiedAt: Date,
+      verifiedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    }],
+  },
+  // Admin notes
+  adminNotes: [{
+    note: String,
+    addedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    addedAt: { type: Date, default: Date.now },
+  }],
+  // Pause/deactivation info
+  pausedAt: Date,
+  pausedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  pauseReason: String,
   spokenLanguages: [{
     type: String,
     enum: ['en', 'es', 'fr', 'de', 'zh', 'ja', 'ko', 'ar', 'pt', 'ru', 'it', 'hi', 'nl', 'pl', 'tr', 'vi', 'asl'],
@@ -138,6 +180,8 @@ therapistSchema.index({ licensedStates: 1 });
 therapistSchema.index({ specializations: 1 });
 therapistSchema.index({ rating: -1 });
 therapistSchema.index({ isVerified: 1 });
+therapistSchema.index({ status: 1 });
+therapistSchema.index({ credentials: 1 });
 
 // Virtual for active client count
 therapistSchema.virtual('activeClientCount').get(function() {

@@ -14,6 +14,12 @@ const {
   updateTherapistCredentials,
   bulkUpdateTherapistCredentials,
   getDashboardStats,
+  getTherapistEarnings,
+  getAllTherapistsEarnings,
+  updateTherapistStatus,
+  verifyTherapistCompliance,
+  getTherapistActivity,
+  getIncompleteTherapistProfiles,
 } = require('../controllers/adminController');
 const {
   getPricingTiers,
@@ -40,6 +46,12 @@ router.get('/users', getAllUsers);
 router.get('/therapists', getAllTherapists);
 router.put('/therapists/:id/credentials', updateTherapistCredentials);
 router.put('/therapists/credentials/bulk', bulkUpdateTherapistCredentials);
+router.get('/therapists/earnings', getAllTherapistsEarnings);
+router.get('/therapists/:id/earnings', getTherapistEarnings);
+router.put('/therapists/:id/status', updateTherapistStatus);
+router.put('/therapists/:id/verify-compliance', verifyTherapistCompliance);
+router.get('/therapists/:id/activity', getTherapistActivity);
+router.get('/therapists/incomplete', getIncompleteTherapistProfiles);
 
 // Client management
 router.get('/clients', getAllClients);

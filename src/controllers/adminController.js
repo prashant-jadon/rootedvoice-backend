@@ -535,6 +535,522 @@ const bulkUpdateTherapistCredentials = asyncHandler(async (req, res) => {
   });
 });
 
+// @desc    Get therapist earnings and hours
+// @route   GET /api/admin/therapists/:id/earnings
+// @access  Private/Admin
+const getTherapistEarnings = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { startDate, endDate } = req.query;
+
+  const therapist = await Therapist.findById(id);
+  if (!therapist) {
+    return res.status(404).json({
+      success: false,
+      message: 'Therapist not found',
+    });
+  }
+
+  // Build date filter for sessions (use scheduledDate)
+  const sessionDateFilter = {};
+  if (startDate || endDate) {
+    sessionDateFilter.scheduledDate = {};
+    if (startDate) sessionDateFilter.scheduledDate.$gte = new Date(startDate);
+    if (endDate) sessionDateFilter.scheduledDate.$lte = new Date(endDate);
+  }
+
+  // Build date filter for payments (use createdAt)
+  const paymentDateFilter = {};
+  if (startDate || endDate) {
+    paymentDateFilter.createdAt = {};
+    if (startDate) paymentDateFilter.createdAt.$gte = new Date(startDate);
+    if (endDate) paymentDateFilter.createdAt.$lte = new Date(endDate);
+  }
+
+  // Get completed sessions with payments
+  const sessions = await Session.find({
+    therapistId: id,
+    status: 'completed',
+    ...sessionDateFilter,
+  }).populate('therapistId', 'credentials hourlyRate');
+
+  // Calculate total hours (using session duration)
+  const totalHours = sessions.reduce((sum, session) => {
+    return sum + (session.duration || 0) / 60; // Convert minutes to hours
+  }, 0);
+
+  // Get payment records for earnings calculation
+  const payments = await Payment.find({
+    therapistId: id,
+    status: 'completed',
+    ...paymentDateFilter,
+  });
+
+  // Calculate earnings from payments (therapist portion)
+  const { getPaymentSplitForUse } = require('./pricingController');
+  let totalEarnings = 0;
+  let totalRevenue = 0;
+
+  for (const payment of payments) {
+    const session = sessions.find(s => s._id.toString() === payment.sessionId.toString());
+    if (session && session.therapistId) {
+      const credentialType = session.therapistId.credentials || 'SLP';
+      const splitConfig = getPaymentSplitForUse(credentialType);
+      const therapistPortion = Math.round(payment.amount * (splitConfig.therapistFeePercent / 100));
+      totalEarnings += therapistPortion;
+      totalRevenue += payment.amount;
+    }
+  }
+
+  // Aggregate earnings by credential type
+  const earningsByCredential = {};
+  for (const session of sessions) {
+    if (session.therapistId) {
+      const credentialType = session.therapistId.credentials || 'SLP';
+      if (!earningsByCredential[credentialType]) {
+        earningsByCredential[credentialType] = { hours: 0, earnings: 0, sessions: 0 };
+      }
+      earningsByCredential[credentialType].hours += (session.duration || 0) / 60;
+      earningsByCredential[credentialType].sessions += 1;
+    }
+  }
+
+  // Calculate earnings for each credential type
+  for (const payment of payments) {
+    const session = sessions.find(s => s._id.toString() === payment.sessionId.toString());
+    if (session && session.therapistId) {
+      const credentialType = session.therapistId.credentials || 'SLP';
+      const splitConfig = getPaymentSplitForUse(credentialType);
+      const therapistPortion = Math.round(payment.amount * (splitConfig.therapistFeePercent / 100));
+      if (earningsByCredential[credentialType]) {
+        earningsByCredential[credentialType].earnings += therapistPortion;
+      }
+    }
+  }
+
+  res.json({
+    success: true,
+    data: {
+      therapist: {
+        _id: therapist._id,
+        credentials: therapist.credentials,
+        hourlyRate: therapist.hourlyRate,
+      },
+      summary: {
+        totalHours: parseFloat(totalHours.toFixed(2)),
+        totalEarnings: totalEarnings, // in cents
+        totalRevenue: totalRevenue, // in cents
+        totalSessions: sessions.length,
+      },
+      byCredential: earningsByCredential,
+      period: {
+        startDate: startDate || null,
+        endDate: endDate || null,
+      },
+    },
+  });
+});
+
+// @desc    Get all therapists earnings summary
+// @route   GET /api/admin/therapists/earnings
+// @access  Private/Admin
+const getAllTherapistsEarnings = asyncHandler(async (req, res) => {
+  const { startDate, endDate, credentialType } = req.query;
+
+  // Build date filter for sessions (use scheduledDate)
+  const sessionDateFilter = {};
+  if (startDate || endDate) {
+    sessionDateFilter.scheduledDate = {};
+    if (startDate) sessionDateFilter.scheduledDate.$gte = new Date(startDate);
+    if (endDate) sessionDateFilter.scheduledDate.$lte = new Date(endDate);
+  }
+
+  // Build date filter for payments (use createdAt)
+  const paymentDateFilter = {};
+  if (startDate || endDate) {
+    paymentDateFilter.createdAt = {};
+    if (startDate) paymentDateFilter.createdAt.$gte = new Date(startDate);
+    if (endDate) paymentDateFilter.createdAt.$lte = new Date(endDate);
+  }
+
+  // Build therapist filter
+  const therapistFilter = {};
+  if (credentialType) {
+    therapistFilter.credentials = credentialType;
+  }
+
+  const therapists = await Therapist.find(therapistFilter).populate('userId', 'firstName lastName email');
+
+  const { getPaymentSplitForUse } = require('./pricingController');
+  const earningsData = await Promise.all(
+    therapists.map(async (therapist) => {
+      const sessions = await Session.find({
+        therapistId: therapist._id,
+        status: 'completed',
+        ...sessionDateFilter,
+      });
+
+      const totalHours = sessions.reduce((sum, session) => {
+        return sum + (session.duration || 0) / 60;
+      }, 0);
+
+      const payments = await Payment.find({
+        therapistId: therapist._id,
+        status: 'completed',
+        ...paymentDateFilter,
+      });
+
+      let totalEarnings = 0;
+      for (const payment of payments) {
+        const session = sessions.find(s => s._id.toString() === payment.sessionId.toString());
+        if (session) {
+          const credType = therapist.credentials || 'SLP';
+          const splitConfig = getPaymentSplitForUse(credType);
+          const therapistPortion = Math.round(payment.amount * (splitConfig.therapistFeePercent / 100));
+          totalEarnings += therapistPortion;
+        }
+      }
+
+      return {
+        therapistId: therapist._id,
+        name: `${therapist.userId?.firstName || ''} ${therapist.userId?.lastName || ''}`.trim(),
+        email: therapist.userId?.email || '',
+        credentials: therapist.credentials,
+        totalHours: parseFloat(totalHours.toFixed(2)),
+        totalEarnings: totalEarnings,
+        totalSessions: sessions.length,
+      };
+    })
+  );
+
+  // Aggregate statistics
+  const aggregateStats = {
+    totalTherapists: earningsData.length,
+    totalHours: earningsData.reduce((sum, t) => sum + t.totalHours, 0),
+    totalEarnings: earningsData.reduce((sum, t) => sum + t.totalEarnings, 0),
+    byCredential: {
+      SLP: {
+        count: earningsData.filter(t => t.credentials === 'SLP').length,
+        totalHours: earningsData.filter(t => t.credentials === 'SLP').reduce((sum, t) => sum + t.totalHours, 0),
+        totalEarnings: earningsData.filter(t => t.credentials === 'SLP').reduce((sum, t) => sum + t.totalEarnings, 0),
+      },
+      SLPA: {
+        count: earningsData.filter(t => t.credentials === 'SLPA').length,
+        totalHours: earningsData.filter(t => t.credentials === 'SLPA').reduce((sum, t) => sum + t.totalHours, 0),
+        totalEarnings: earningsData.filter(t => t.credentials === 'SLPA').reduce((sum, t) => sum + t.totalEarnings, 0),
+      },
+    },
+  };
+
+  res.json({
+    success: true,
+    data: {
+      therapists: earningsData,
+      aggregate: aggregateStats,
+      period: {
+        startDate: startDate || null,
+        endDate: endDate || null,
+      },
+    },
+  });
+});
+
+// @desc    Update therapist status (activate, pause, deactivate)
+// @route   PUT /api/admin/therapists/:id/status
+// @access  Private/Admin
+const updateTherapistStatus = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { status, reason } = req.body;
+
+  if (!['pending', 'inactive', 'active', 'paused'].includes(status)) {
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid status. Must be one of: pending, inactive, active, paused',
+    });
+  }
+
+  const therapist = await Therapist.findById(id);
+  if (!therapist) {
+    return res.status(404).json({
+      success: false,
+      message: 'Therapist not found',
+    });
+  }
+
+  therapist.status = status;
+  if (status === 'paused') {
+    therapist.pausedAt = new Date();
+    therapist.pausedBy = req.user._id;
+    therapist.pauseReason = reason || 'Paused by admin';
+  } else if (status === 'active') {
+    therapist.pausedAt = null;
+    therapist.pausedBy = null;
+    therapist.pauseReason = null;
+  }
+
+  await therapist.save();
+
+  const updatedTherapist = await Therapist.findById(id)
+    .populate('userId', 'firstName lastName email avatar phone');
+
+  res.json({
+    success: true,
+    message: `Therapist status updated to ${status}`,
+    data: updatedTherapist,
+  });
+});
+
+// @desc    Verify therapist compliance documents
+// @route   PUT /api/admin/therapists/:id/verify-compliance
+// @access  Private/Admin
+const verifyTherapistCompliance = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { documentType, verified, notes } = req.body;
+
+  const therapist = await Therapist.findById(id);
+  if (!therapist) {
+    return res.status(404).json({
+      success: false,
+      message: 'Therapist not found',
+    });
+  }
+
+  const verificationData = {
+    verified: verified === true,
+    verifiedAt: verified === true ? new Date() : null,
+    verifiedBy: verified === true ? req.user._id : null,
+  };
+
+  if (documentType === 'stateLicense') {
+    therapist.complianceDocuments.stateLicense = {
+      ...therapist.complianceDocuments.stateLicense,
+      ...verificationData,
+    };
+  } else if (documentType === 'liabilityInsurance') {
+    therapist.complianceDocuments.liabilityInsurance = {
+      ...therapist.complianceDocuments.liabilityInsurance,
+      ...verificationData,
+    };
+  } else if (documentType === 'additionalCredentials') {
+    // This would require credentialId in body to identify which credential
+    const { credentialId } = req.body;
+    if (!credentialId) {
+      return res.status(400).json({
+        success: false,
+        message: 'credentialId is required for additionalCredentials',
+      });
+    }
+    const credential = therapist.complianceDocuments.additionalCredentials.id(credentialId);
+    if (credential) {
+      credential.verified = verified === true;
+      credential.verifiedAt = verified === true ? new Date() : null;
+      credential.verifiedBy = verified === true ? req.user._id : null;
+    }
+  } else {
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid documentType. Must be one of: stateLicense, liabilityInsurance, additionalCredentials',
+    });
+  }
+
+  // Add admin note if provided
+  if (notes) {
+    therapist.adminNotes.push({
+      note: notes,
+      addedBy: req.user._id,
+      addedAt: new Date(),
+    });
+  }
+
+  // Check if all required documents are verified to auto-activate
+  const stateLicenseVerified = therapist.complianceDocuments?.stateLicense?.verified || false;
+  const liabilityInsuranceVerified = therapist.complianceDocuments?.liabilityInsurance?.verified || false;
+
+  // Auto-activate if all required documents are verified
+  if (stateLicenseVerified && liabilityInsuranceVerified && therapist.status === 'pending') {
+    therapist.status = 'active';
+    therapist.isVerified = true;
+  }
+
+  await therapist.save();
+
+  const updatedTherapist = await Therapist.findById(id)
+    .populate('userId', 'firstName lastName email avatar phone')
+    .populate('complianceDocuments.stateLicense.verifiedBy', 'firstName lastName')
+    .populate('complianceDocuments.liabilityInsurance.verifiedBy', 'firstName lastName');
+
+  res.json({
+    success: true,
+    message: 'Compliance document verification updated',
+    data: updatedTherapist,
+  });
+});
+
+// @desc    Get therapist activity logs
+// @route   GET /api/admin/therapists/:id/activity
+// @access  Private/Admin
+const getTherapistActivity = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { startDate, endDate, page = 1, limit = 50 } = req.query;
+
+  const therapist = await Therapist.findById(id);
+  if (!therapist) {
+    return res.status(404).json({
+      success: false,
+      message: 'Therapist not found',
+    });
+  }
+
+  // Build date filter for sessions
+  const sessionDateFilter = {};
+  if (startDate || endDate) {
+    sessionDateFilter.scheduledDate = {};
+    if (startDate) sessionDateFilter.scheduledDate.$gte = new Date(startDate);
+    if (endDate) sessionDateFilter.scheduledDate.$lte = new Date(endDate);
+  }
+
+  // Build date filter for payments
+  const paymentDateFilter = {};
+  if (startDate || endDate) {
+    paymentDateFilter.createdAt = {};
+    if (startDate) paymentDateFilter.createdAt.$gte = new Date(startDate);
+    if (endDate) paymentDateFilter.createdAt.$lte = new Date(endDate);
+  }
+
+  const skip = (parseInt(page) - 1) * parseInt(limit);
+
+  // Get sessions
+  const sessions = await Session.find({
+    therapistId: id,
+    ...sessionDateFilter,
+  })
+    .populate('clientId', 'userId')
+    .sort({ scheduledDate: -1 })
+    .skip(skip)
+    .limit(parseInt(limit));
+
+  const totalSessions = await Session.countDocuments({
+    therapistId: id,
+    ...dateFilter,
+  });
+
+  // Calculate activity metrics
+  const completedSessions = sessions.filter(s => s.status === 'completed').length;
+  const cancelledSessions = sessions.filter(s => s.status === 'cancelled').length;
+  const noShowSessions = sessions.filter(s => s.status === 'no-show').length;
+
+  // Get payments
+  const payments = await Payment.find({
+    therapistId: id,
+    ...paymentDateFilter,
+  }).sort({ createdAt: -1 });
+
+  res.json({
+    success: true,
+    data: {
+      therapist: {
+        _id: therapist._id,
+        name: `${therapist.userId?.firstName || ''} ${therapist.userId?.lastName || ''}`.trim(),
+        credentials: therapist.credentials,
+      },
+      activity: {
+        sessions: sessions.map(s => ({
+          _id: s._id,
+          scheduledDate: s.scheduledDate,
+          status: s.status,
+          duration: s.duration,
+          clientId: s.clientId?._id,
+          clientName: s.clientId?.userId ? `${s.clientId.userId.firstName} ${s.clientId.userId.lastName}` : 'N/A',
+          cancellationReason: s.cancellationReason,
+          cancelledAt: s.cancelledAt,
+        })),
+        payments: payments.map(p => ({
+          _id: p._id,
+          amount: p.amount,
+          status: p.status,
+          createdAt: p.createdAt,
+          sessionId: p.sessionId,
+        })),
+      },
+      metrics: {
+        totalSessions,
+        completedSessions,
+        cancelledSessions,
+        noShowSessions,
+        totalPayments: payments.length,
+      },
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total: totalSessions,
+        pages: Math.ceil(totalSessions / parseInt(limit)),
+      },
+      period: {
+        startDate: startDate || null,
+        endDate: endDate || null,
+      },
+    },
+  });
+});
+
+// @desc    Get therapists with incomplete profiles
+// @route   GET /api/admin/therapists/incomplete
+// @access  Private/Admin
+const getIncompleteTherapistProfiles = asyncHandler(async (req, res) => {
+  const therapists = await Therapist.find({
+    status: { $in: ['pending', 'inactive'] },
+  })
+    .populate('userId', 'firstName lastName email phone')
+    .sort({ createdAt: -1 });
+
+  const incompleteProfiles = therapists.map(therapist => {
+    const missingItems = [];
+    
+    if (!therapist.complianceDocuments?.stateLicense?.number) {
+      missingItems.push('State License Number');
+    }
+    if (!therapist.complianceDocuments?.stateLicense?.verified) {
+      missingItems.push('State License Verification');
+    }
+    if (!therapist.complianceDocuments?.liabilityInsurance?.policyNumber) {
+      missingItems.push('Liability Insurance Policy Number');
+    }
+    if (!therapist.complianceDocuments?.liabilityInsurance?.verified) {
+      missingItems.push('Liability Insurance Verification');
+    }
+    if (!therapist.hourlyRate) {
+      missingItems.push('Hourly Rate');
+    }
+    if (!therapist.specializations || therapist.specializations.length === 0) {
+      missingItems.push('Specializations');
+    }
+    if (!therapist.availability || therapist.availability.length === 0) {
+      missingItems.push('Availability');
+    }
+
+    return {
+      therapist: {
+        _id: therapist._id,
+        name: `${therapist.userId?.firstName || ''} ${therapist.userId?.lastName || ''}`.trim(),
+        email: therapist.userId?.email || '',
+        status: therapist.status,
+        credentials: therapist.credentials,
+      },
+      missingItems,
+      isComplete: missingItems.length === 0,
+    };
+  });
+
+  res.json({
+    success: true,
+    data: {
+      incompleteProfiles: incompleteProfiles.filter(p => !p.isComplete),
+      allPending: incompleteProfiles,
+      total: incompleteProfiles.length,
+      incomplete: incompleteProfiles.filter(p => !p.isComplete).length,
+    },
+  });
+});
+
 module.exports = {
   getAllUsers,
   getAllTherapists,
@@ -547,5 +1063,11 @@ module.exports = {
   updateTherapistCredentials,
   bulkUpdateTherapistCredentials,
   getDashboardStats,
+  getTherapistEarnings,
+  getAllTherapistsEarnings,
+  updateTherapistStatus,
+  verifyTherapistCompliance,
+  getTherapistActivity,
+  getIncompleteTherapistProfiles,
 };
 

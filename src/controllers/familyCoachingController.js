@@ -199,6 +199,14 @@ const createFamilyCoachingSession = asyncHandler(async (req, res) => {
     });
   }
 
+  // Check if therapist is active (can provide services)
+  if (therapist.status !== 'active') {
+    return res.status(403).json({
+      success: false,
+      message: `Therapist is ${therapist.status} and cannot provide services. Please contact support.`,
+    });
+  }
+
   // Validate date
   const sessionDate = new Date(scheduledDate);
   if (isNaN(sessionDate.getTime())) {

@@ -51,10 +51,16 @@ let PRICING_TIERS = {
   }
 };
 
-// Payment split configuration (platform fee %)
+// Payment split configuration (platform fee %) - differentiated by credential type
 let PAYMENT_SPLIT = {
-  platformFeePercent: 20, // Platform gets 20%
-  therapistFeePercent: 80, // Therapist gets 80%
+  SLP: {
+    platformFeePercent: 20, // Platform gets 20%
+    therapistFeePercent: 80, // Therapist gets 80%
+  },
+  SLPA: {
+    platformFeePercent: 20, // Platform gets 20%
+    therapistFeePercent: 80, // Therapist gets 80%
+  },
 };
 
 // Rate caps configuration (hourly rate maximums)
@@ -63,8 +69,11 @@ let RATE_CAPS = {
   SLPA: 55, // SLPA (Assistant) max hourly rate: $55
 };
 
-// SLPA cancellation fee (flat rate when patient cancels)
-let SLPA_CANCELLATION_FEE = 15; // $15 flat rate for SLPA cancellations
+// Cancellation fees by credential type (flat rate when patient cancels)
+let CANCELLATION_FEES = {
+  SLPA: 15, // $15 flat rate for SLPA cancellations
+  SLP: 20,  // $20 flat rate for SLP cancellations
+};
 
 // @desc    Get all pricing tiers
 // @route   GET /api/admin/pricing
@@ -173,7 +182,7 @@ const getPaymentSplit = asyncHandler(async (req, res) => {
 // @route   PUT /api/admin/payment-split
 // @access  Private/Admin
 const updatePaymentSplit = asyncHandler(async (req, res) => {
-  const { platformFeePercent } = req.body;
+  const { credentialType, platformFeePercent } = req.body;
 
   if (platformFeePercent < 0 || platformFeePercent > 100) {
     return res.status(400).json({
@@ -182,10 +191,23 @@ const updatePaymentSplit = asyncHandler(async (req, res) => {
     });
   }
 
-  PAYMENT_SPLIT = {
-    platformFeePercent,
-    therapistFeePercent: 100 - platformFeePercent,
-  };
+  // If credentialType is specified, update that specific split
+  if (credentialType && ['SLP', 'SLPA'].includes(credentialType)) {
+    PAYMENT_SPLIT[credentialType] = {
+      platformFeePercent,
+      therapistFeePercent: 100 - platformFeePercent,
+    };
+  } else {
+    // Update both if no credential type specified (backward compatibility)
+    PAYMENT_SPLIT.SLP = {
+      platformFeePercent,
+      therapistFeePercent: 100 - platformFeePercent,
+    };
+    PAYMENT_SPLIT.SLPA = {
+      platformFeePercent,
+      therapistFeePercent: 100 - platformFeePercent,
+    };
+  }
 
   res.json({
     success: true,
@@ -203,7 +225,7 @@ const getRateCaps = asyncHandler(async (req, res) => {
     data: {
       SLP: RATE_CAPS.SLP,
       SLPA: RATE_CAPS.SLPA,
-      slpaCancellationFee: SLPA_CANCELLATION_FEE,
+      cancellationFees: CANCELLATION_FEES,
     },
   });
 });
@@ -212,7 +234,7 @@ const getRateCaps = asyncHandler(async (req, res) => {
 // @route   PUT /api/admin/rate-caps
 // @access  Private/Admin
 const updateRateCaps = asyncHandler(async (req, res) => {
-  const { SLP, SLPA, slpaCancellationFee } = req.body;
+  const { SLP, SLPA, slpCancellationFee, slpaCancellationFee } = req.body;
 
   if (SLP !== undefined) {
     if (SLP < 0 || SLP > 200) {
@@ -234,6 +256,16 @@ const updateRateCaps = asyncHandler(async (req, res) => {
     RATE_CAPS.SLPA = SLPA;
   }
 
+  if (slpCancellationFee !== undefined) {
+    if (slpCancellationFee < 0 || slpCancellationFee > 100) {
+      return res.status(400).json({
+        success: false,
+        message: 'SLP cancellation fee must be between 0 and 100',
+      });
+    }
+    CANCELLATION_FEES.SLP = slpCancellationFee;
+  }
+
   if (slpaCancellationFee !== undefined) {
     if (slpaCancellationFee < 0 || slpaCancellationFee > 100) {
       return res.status(400).json({
@@ -241,7 +273,7 @@ const updateRateCaps = asyncHandler(async (req, res) => {
         message: 'SLPA cancellation fee must be between 0 and 100',
       });
     }
-    SLPA_CANCELLATION_FEE = slpaCancellationFee;
+    CANCELLATION_FEES.SLPA = slpaCancellationFee;
   }
 
   res.json({
@@ -250,7 +282,7 @@ const updateRateCaps = asyncHandler(async (req, res) => {
     data: {
       SLP: RATE_CAPS.SLP,
       SLPA: RATE_CAPS.SLPA,
-      slpaCancellationFee: SLPA_CANCELLATION_FEE,
+      cancellationFees: CANCELLATION_FEES,
     },
   });
 });
@@ -259,13 +291,19 @@ const updateRateCaps = asyncHandler(async (req, res) => {
 const getPricingTiersForSubscription = () => PRICING_TIERS;
 
 // Export payment split for use in other controllers
-const getPaymentSplitForUse = () => PAYMENT_SPLIT;
+// Returns split based on credential type, defaults to SLP if not specified
+const getPaymentSplitForUse = (credentialType = 'SLP') => {
+  return PAYMENT_SPLIT[credentialType] || PAYMENT_SPLIT.SLP;
+};
 
 // Export rate caps for use in other controllers
 const getRateCapsForUse = () => RATE_CAPS;
 
-// Export SLPA cancellation fee for use in other controllers
-const getSLPACancellationFee = () => SLPA_CANCELLATION_FEE;
+// Export cancellation fee for use in other controllers
+// Returns fee based on credential type
+const getCancellationFee = (credentialType = 'SLPA') => {
+  return CANCELLATION_FEES[credentialType] || CANCELLATION_FEES.SLPA;
+};
 
 module.exports = {
   getPricingTiers,
@@ -279,6 +317,6 @@ module.exports = {
   getPricingTiersForSubscription,
   getPaymentSplitForUse,
   getRateCapsForUse,
-  getSLPACancellationFee,
+  getCancellationFee,
 };
 

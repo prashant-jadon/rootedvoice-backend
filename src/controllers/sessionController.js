@@ -4,7 +4,7 @@ const Client = require('../models/Client');
 const Payment = require('../models/Payment');
 const { asyncHandler } = require('../middlewares/errorHandler');
 const { v4: uuidv4 } = require('uuid');
-const { getSLPACancellationFee, getRateCapsForUse } = require('./pricingController');
+const { getCancellationFee, getRateCapsForUse } = require('./pricingController');
 
 // @desc    Get all sessions
 // @route   GET /api/sessions
@@ -183,6 +183,14 @@ const createSession = asyncHandler(async (req, res) => {
     return res.status(404).json({
       success: false,
       message: 'Therapist not found',
+    });
+  }
+
+  // Check if therapist is active (can provide services)
+  if (therapist.status !== 'active') {
+    return res.status(403).json({
+      success: false,
+      message: `Therapist is ${therapist.status} and cannot provide services. Please contact support.`,
     });
   }
 
@@ -434,15 +442,15 @@ const cancelSession = asyncHandler(async (req, res) => {
   session.cancelledAt = new Date();
   session.cancelledBy = req.user._id;
 
-  // Handle SLPA cancellation fee
-  // If patient cancels AND SLPA logs it, they get $15 flat rate
+  // Handle cancellation fee by credential type
+  // If patient cancels AND therapist logs it, they get flat rate based on credentials
   const therapist = session.therapistId;
-  const isSLPA = therapist.credentials === 'SLPA';
+  const credentialType = therapist.credentials || 'SLPA';
   const isTherapistLogging = req.user.role === 'therapist' && loggedByTherapist === true;
 
-  if (isSLPA && isTherapistLogging) {
-    // SLPA logged the cancellation - create payment record for $15 cancellation fee
-    const cancellationFee = getSLPACancellationFee();
+  if (isTherapistLogging && ['SLP', 'SLPA'].includes(credentialType)) {
+    // Therapist logged the cancellation - create payment record for cancellation fee
+    const cancellationFee = getCancellationFee(credentialType);
     
     // Update session price to cancellation fee
     session.price = cancellationFee;
@@ -459,7 +467,8 @@ const cancelSession = asyncHandler(async (req, res) => {
       status: 'pending',
       metadata: {
         type: 'cancellation_fee',
-        reason: reason || 'Patient cancellation - SLPA logged',
+        credentialType: credentialType,
+        reason: reason || `Patient cancellation - ${credentialType} logged`,
       },
     });
   }
@@ -483,9 +492,9 @@ const cancelSession = asyncHandler(async (req, res) => {
     success: true,
     message: 'Session cancelled successfully',
     data: session,
-    ...(isSLPA && isTherapistLogging && {
-      cancellationFee: getSLPACancellationFee(),
-      message: `Session cancelled. SLPA cancellation fee of $${getSLPACancellationFee()} will be processed.`,
+    ...(isTherapistLogging && ['SLP', 'SLPA'].includes(credentialType) && {
+      cancellationFee: getCancellationFee(credentialType),
+      message: `Session cancelled. ${credentialType} cancellation fee of $${getCancellationFee(credentialType)} will be processed.`,
     }),
   });
 });
