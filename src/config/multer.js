@@ -12,6 +12,11 @@ const storage = multer.diskStorage({
       folder += 'avatars/';
     } else if (file.fieldname === 'document') {
       folder += 'documents/';
+    } else if (file.fieldname === 'spaMembership' || file.fieldname === 'stateRegistration' || 
+               file.fieldname === 'professionalIndemnityInsurance' || file.fieldname === 'workingWithChildrenCheck' ||
+               file.fieldname === 'policeCheck' || file.fieldname === 'academicQualification' ||
+               file.fieldname === 'additionalCredential') {
+      folder += 'documents/compliance/';
     } else if (file.fieldname === 'attachments') {
       folder += 'attachments/';
     } else if (file.fieldname === 'resource') {
@@ -46,6 +51,14 @@ const fileFilter = (req, file, cb) => {
       return cb(null, true);
     }
   } else if (file.fieldname === 'document') {
+    if (allowedDocTypes.test(extname) || allowedImageTypes.test(extname)) {
+      return cb(null, true);
+    }
+  } else if (file.fieldname === 'spaMembership' || file.fieldname === 'stateRegistration' || 
+             file.fieldname === 'professionalIndemnityInsurance' || file.fieldname === 'workingWithChildrenCheck' ||
+             file.fieldname === 'policeCheck' || file.fieldname === 'academicQualification' ||
+             file.fieldname === 'additionalCredential') {
+    // Compliance documents: PDF, images, or Word docs
     if (allowedDocTypes.test(extname) || allowedImageTypes.test(extname)) {
       return cb(null, true);
     }

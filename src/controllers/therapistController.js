@@ -3,6 +3,9 @@ const User = require('../models/User');
 const Review = require('../models/Review');
 const { asyncHandler } = require('../middlewares/errorHandler');
 const { getRateCapsForUse } = require('./pricingController');
+const upload = require('../config/multer');
+const path = require('path');
+const fs = require('fs').promises;
 
 // @desc    Get all therapists
 // @route   GET /api/therapists
@@ -45,6 +48,9 @@ const getTherapists = asyncHandler(async (req, res) => {
   if (isVerified !== undefined) {
     filter.isVerified = isVerified === 'true';
   }
+
+  // Only show active therapists to public
+  filter.status = 'active';
 
   // Bilingual therapist matching
   if (language) {
@@ -108,6 +114,103 @@ const getTherapist = asyncHandler(async (req, res) => {
     data: {
       therapist,
       reviews,
+    },
+  });
+});
+
+// @desc    Upload compliance documents
+// @route   POST /api/therapists/upload-documents
+// @access  Private (Therapist)
+const uploadDocuments = asyncHandler(async (req, res) => {
+  const userId = req.user._id;
+  const therapist = await Therapist.findOne({ userId });
+
+  if (!therapist) {
+    return res.status(404).json({
+      success: false,
+      message: 'Therapist profile not found',
+    });
+  }
+
+  const uploadedFiles = {};
+  const documentTypes = [
+    'spaMembership',
+    'stateRegistration',
+    'professionalIndemnityInsurance',
+    'workingWithChildrenCheck',
+    'policeCheck',
+    'academicQualification',
+    'additionalCredential',
+  ];
+
+  // Process uploaded files
+  for (const docType of documentTypes) {
+    if (req.files && req.files[docType]) {
+      const file = Array.isArray(req.files[docType]) ? req.files[docType][0] : req.files[docType];
+      uploadedFiles[docType] = file.path;
+    }
+  }
+
+  // Update therapist with document URLs
+  if (uploadedFiles.spaMembership && req.body.spaMembershipNumber) {
+    therapist.complianceDocuments.spaMembership = {
+      ...therapist.complianceDocuments.spaMembership,
+      membershipNumber: req.body.spaMembershipNumber,
+      membershipType: req.body.spaMembershipType,
+      expirationDate: req.body.spaMembershipExpirationDate,
+      documentUrl: uploadedFiles.spaMembership,
+    };
+  }
+
+  if (uploadedFiles.stateRegistration && req.body.stateRegistrationNumber) {
+    therapist.complianceDocuments.stateRegistration = {
+      ...therapist.complianceDocuments.stateRegistration,
+      registrationNumber: req.body.stateRegistrationNumber,
+      state: req.body.stateRegistrationState,
+      expirationDate: req.body.stateRegistrationExpirationDate,
+      documentUrl: uploadedFiles.stateRegistration,
+    };
+  }
+
+  if (uploadedFiles.professionalIndemnityInsurance && req.body.insuranceProvider) {
+    therapist.complianceDocuments.professionalIndemnityInsurance = {
+      ...therapist.complianceDocuments.professionalIndemnityInsurance,
+      provider: req.body.insuranceProvider,
+      policyNumber: req.body.insurancePolicyNumber,
+      coverageAmount: req.body.insuranceCoverageAmount,
+      expirationDate: req.body.insuranceExpirationDate,
+      documentUrl: uploadedFiles.professionalIndemnityInsurance,
+    };
+  }
+
+  if (uploadedFiles.workingWithChildrenCheck && req.body.wwccNumber) {
+    therapist.complianceDocuments.workingWithChildrenCheck = {
+      ...therapist.complianceDocuments.workingWithChildrenCheck,
+      checkNumber: req.body.wwccNumber,
+      state: req.body.wwccState,
+      expirationDate: req.body.wwccExpirationDate,
+      documentUrl: uploadedFiles.workingWithChildrenCheck,
+    };
+  }
+
+  if (uploadedFiles.policeCheck && req.body.policeCheckNumber) {
+    therapist.complianceDocuments.policeCheck = {
+      ...therapist.complianceDocuments.policeCheck,
+      checkNumber: req.body.policeCheckNumber,
+      issueDate: req.body.policeCheckIssueDate,
+      expirationDate: req.body.policeCheckExpirationDate,
+      documentUrl: uploadedFiles.policeCheck,
+    };
+  }
+
+  await therapist.save();
+
+  res.json({
+    success: true,
+    message: 'Documents uploaded successfully',
+    data: {
+      uploadedFiles: Object.keys(uploadedFiles),
+      therapist: await Therapist.findById(therapist._id).populate('userId', 'firstName lastName email'),
     },
   });
 });
@@ -304,5 +407,5 @@ module.exports = {
   createOrUpdateTherapist,
   updateAvailability,
   getTherapistStats,
+  uploadDocuments,
 };
-

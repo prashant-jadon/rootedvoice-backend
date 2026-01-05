@@ -722,6 +722,64 @@ const getAllTherapistsEarnings = asyncHandler(async (req, res) => {
     })
   );
 
+  // Calculate earnings ranges distribution
+  const earningsRanges = {
+    '0-1000': 0,
+    '1000-5000': 0,
+    '5000-10000': 0,
+    '10000-25000': 0,
+    '25000-50000': 0,
+    '50000+': 0,
+  };
+
+  earningsData.forEach((therapist) => {
+    const earnings = therapist.totalEarnings / 100; // Convert from cents to dollars
+    if (earnings === 0) {
+      earningsRanges['0-1000']++;
+    } else if (earnings < 1000) {
+      earningsRanges['0-1000']++;
+    } else if (earnings < 5000) {
+      earningsRanges['1000-5000']++;
+    } else if (earnings < 10000) {
+      earningsRanges['5000-10000']++;
+    } else if (earnings < 25000) {
+      earningsRanges['10000-25000']++;
+    } else if (earnings < 50000) {
+      earningsRanges['25000-50000']++;
+    } else {
+      earningsRanges['50000+']++;
+    }
+  });
+
+  // Calculate hours ranges distribution
+  const hoursRanges = {
+    '0-10': 0,
+    '10-50': 0,
+    '50-100': 0,
+    '100-250': 0,
+    '250-500': 0,
+    '500+': 0,
+  };
+
+  earningsData.forEach((therapist) => {
+    const hours = therapist.totalHours;
+    if (hours === 0) {
+      hoursRanges['0-10']++;
+    } else if (hours < 10) {
+      hoursRanges['0-10']++;
+    } else if (hours < 50) {
+      hoursRanges['10-50']++;
+    } else if (hours < 100) {
+      hoursRanges['50-100']++;
+    } else if (hours < 250) {
+      hoursRanges['100-250']++;
+    } else if (hours < 500) {
+      hoursRanges['250-500']++;
+    } else {
+      hoursRanges['500+']++;
+    }
+  });
+
   // Aggregate statistics
   const aggregateStats = {
     totalTherapists: earningsData.length,
@@ -739,6 +797,8 @@ const getAllTherapistsEarnings = asyncHandler(async (req, res) => {
         totalEarnings: earningsData.filter(t => t.credentials === 'SLPA').reduce((sum, t) => sum + t.totalEarnings, 0),
       },
     },
+    earningsRanges,
+    hoursRanges,
   };
 
   res.json({
@@ -820,12 +880,61 @@ const verifyTherapistCompliance = asyncHandler(async (req, res) => {
     verifiedBy: verified === true ? req.user._id : null,
   };
 
-  if (documentType === 'stateLicense') {
+  // Handle different document types
+  if (documentType === 'spaMembership') {
+    if (!therapist.complianceDocuments.spaMembership) {
+      therapist.complianceDocuments.spaMembership = {};
+    }
+    therapist.complianceDocuments.spaMembership = {
+      ...therapist.complianceDocuments.spaMembership,
+      ...verificationData,
+    };
+  } else if (documentType === 'stateRegistration') {
+    if (!therapist.complianceDocuments.stateRegistration) {
+      therapist.complianceDocuments.stateRegistration = {};
+    }
+    therapist.complianceDocuments.stateRegistration = {
+      ...therapist.complianceDocuments.stateRegistration,
+      ...verificationData,
+    };
+  } else if (documentType === 'professionalIndemnityInsurance') {
+    if (!therapist.complianceDocuments.professionalIndemnityInsurance) {
+      therapist.complianceDocuments.professionalIndemnityInsurance = {};
+    }
+    therapist.complianceDocuments.professionalIndemnityInsurance = {
+      ...therapist.complianceDocuments.professionalIndemnityInsurance,
+      ...verificationData,
+    };
+  } else if (documentType === 'workingWithChildrenCheck') {
+    if (!therapist.complianceDocuments.workingWithChildrenCheck) {
+      therapist.complianceDocuments.workingWithChildrenCheck = {};
+    }
+    therapist.complianceDocuments.workingWithChildrenCheck = {
+      ...therapist.complianceDocuments.workingWithChildrenCheck,
+      ...verificationData,
+    };
+  } else if (documentType === 'policeCheck') {
+    if (!therapist.complianceDocuments.policeCheck) {
+      therapist.complianceDocuments.policeCheck = {};
+    }
+    therapist.complianceDocuments.policeCheck = {
+      ...therapist.complianceDocuments.policeCheck,
+      ...verificationData,
+    };
+  } else if (documentType === 'stateLicense') {
+    // Legacy support
+    if (!therapist.complianceDocuments.stateLicense) {
+      therapist.complianceDocuments.stateLicense = {};
+    }
     therapist.complianceDocuments.stateLicense = {
       ...therapist.complianceDocuments.stateLicense,
       ...verificationData,
     };
   } else if (documentType === 'liabilityInsurance') {
+    // Legacy support
+    if (!therapist.complianceDocuments.liabilityInsurance) {
+      therapist.complianceDocuments.liabilityInsurance = {};
+    }
     therapist.complianceDocuments.liabilityInsurance = {
       ...therapist.complianceDocuments.liabilityInsurance,
       ...verificationData,
@@ -848,7 +957,7 @@ const verifyTherapistCompliance = asyncHandler(async (req, res) => {
   } else {
     return res.status(400).json({
       success: false,
-      message: 'Invalid documentType. Must be one of: stateLicense, liabilityInsurance, additionalCredentials',
+      message: 'Invalid documentType. Must be one of: spaMembership, stateRegistration, professionalIndemnityInsurance, workingWithChildrenCheck, policeCheck, stateLicense, liabilityInsurance, additionalCredentials',
     });
   }
 
@@ -862,11 +971,23 @@ const verifyTherapistCompliance = asyncHandler(async (req, res) => {
   }
 
   // Check if all required documents are verified to auto-activate
+  // Australia-specific documents
+  const spaMembershipVerified = therapist.complianceDocuments?.spaMembership?.verified || false;
+  const stateRegistrationVerified = therapist.complianceDocuments?.stateRegistration?.verified || false;
+  const insuranceVerified = therapist.complianceDocuments?.professionalIndemnityInsurance?.verified || false;
+  const wwccVerified = therapist.complianceDocuments?.workingWithChildrenCheck?.verified || false;
+  const policeCheckVerified = therapist.complianceDocuments?.policeCheck?.verified || false;
+  
+  // Legacy documents (for backward compatibility)
   const stateLicenseVerified = therapist.complianceDocuments?.stateLicense?.verified || false;
   const liabilityInsuranceVerified = therapist.complianceDocuments?.liabilityInsurance?.verified || false;
 
   // Auto-activate if all required documents are verified
-  if (stateLicenseVerified && liabilityInsuranceVerified && therapist.status === 'pending') {
+  // Check Australia-specific documents first, then fall back to legacy
+  const allAustraliaDocsVerified = spaMembershipVerified && stateRegistrationVerified && insuranceVerified && wwccVerified && policeCheckVerified;
+  const allLegacyDocsVerified = stateLicenseVerified && liabilityInsuranceVerified;
+  
+  if ((allAustraliaDocsVerified || allLegacyDocsVerified) && therapist.status === 'pending') {
     therapist.status = 'active';
     therapist.isVerified = true;
   }
@@ -930,7 +1051,7 @@ const getTherapistActivity = asyncHandler(async (req, res) => {
 
   const totalSessions = await Session.countDocuments({
     therapistId: id,
-    ...dateFilter,
+    ...sessionDateFilter,
   });
 
   // Calculate activity metrics
@@ -1005,17 +1126,54 @@ const getIncompleteTherapistProfiles = asyncHandler(async (req, res) => {
   const incompleteProfiles = therapists.map(therapist => {
     const missingItems = [];
     
-    if (!therapist.complianceDocuments?.stateLicense?.number) {
-      missingItems.push('State License Number');
+    // Check Australia-specific documents
+    if (!therapist.complianceDocuments?.spaMembership?.membershipNumber) {
+      missingItems.push('SPA Membership Number');
     }
-    if (!therapist.complianceDocuments?.stateLicense?.verified) {
-      missingItems.push('State License Verification');
+    if (!therapist.complianceDocuments?.spaMembership?.verified) {
+      missingItems.push('SPA Membership Verification');
     }
-    if (!therapist.complianceDocuments?.liabilityInsurance?.policyNumber) {
-      missingItems.push('Liability Insurance Policy Number');
+    if (!therapist.complianceDocuments?.stateRegistration?.registrationNumber) {
+      missingItems.push('State Registration Number');
     }
-    if (!therapist.complianceDocuments?.liabilityInsurance?.verified) {
-      missingItems.push('Liability Insurance Verification');
+    if (!therapist.complianceDocuments?.stateRegistration?.verified) {
+      missingItems.push('State Registration Verification');
+    }
+    if (!therapist.complianceDocuments?.professionalIndemnityInsurance?.policyNumber) {
+      missingItems.push('Professional Indemnity Insurance Policy Number');
+    }
+    if (!therapist.complianceDocuments?.professionalIndemnityInsurance?.verified) {
+      missingItems.push('Professional Indemnity Insurance Verification');
+    }
+    if (!therapist.complianceDocuments?.workingWithChildrenCheck?.checkNumber) {
+      missingItems.push('Working with Children Check Number');
+    }
+    if (!therapist.complianceDocuments?.workingWithChildrenCheck?.verified) {
+      missingItems.push('Working with Children Check Verification');
+    }
+    if (!therapist.complianceDocuments?.policeCheck?.checkNumber) {
+      missingItems.push('Police Check Number');
+    }
+    if (!therapist.complianceDocuments?.policeCheck?.verified) {
+      missingItems.push('Police Check Verification');
+    }
+    
+    // Legacy documents (for backward compatibility - only check if Australia docs don't exist)
+    if (!therapist.complianceDocuments?.spaMembership?.membershipNumber) {
+      if (!therapist.complianceDocuments?.stateLicense?.number) {
+        missingItems.push('State License Number (Legacy)');
+      }
+      if (!therapist.complianceDocuments?.stateLicense?.verified) {
+        missingItems.push('State License Verification (Legacy)');
+      }
+    }
+    if (!therapist.complianceDocuments?.professionalIndemnityInsurance?.policyNumber) {
+      if (!therapist.complianceDocuments?.liabilityInsurance?.policyNumber) {
+        missingItems.push('Liability Insurance Policy Number (Legacy)');
+      }
+      if (!therapist.complianceDocuments?.liabilityInsurance?.verified) {
+        missingItems.push('Liability Insurance Verification (Legacy)');
+      }
     }
     if (!therapist.hourlyRate) {
       missingItems.push('Hourly Rate');

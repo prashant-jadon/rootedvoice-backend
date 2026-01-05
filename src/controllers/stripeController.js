@@ -241,7 +241,6 @@ const createCancellationPayment = asyncHandler(async (req, res) => {
   }
 
   // Get cancellation fee based on therapist credentials
-  const credentialType = session.therapistId.credentials || 'SLPA';
   const cancellationFee = getCancellationFee(credentialType);
   const amountInCents = Math.round(cancellationFee * 100);
 

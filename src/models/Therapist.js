@@ -16,6 +16,12 @@ const therapistSchema = new mongoose.Schema({
     type: String,
     required: true,
   }],
+  // Australia-specific: Practice location
+  practiceLocation: {
+    state: String, // NSW, VIC, QLD, SA, WA, TAS, NT, ACT
+    city: String,
+    postcode: String,
+  },
   specializations: [{
     type: String,
     enum: [
@@ -127,10 +133,83 @@ const therapistSchema = new mongoose.Schema({
   },
   // Compliance documents
   complianceDocuments: {
+    // Australia-specific: Speech Pathology Australia (SPA) membership
+    spaMembership: {
+      membershipNumber: String,
+      membershipType: String, // Full Member, Provisional Member, etc.
+      expirationDate: Date,
+      documentUrl: String, // Uploaded document file path
+      verified: { type: Boolean, default: false },
+      verifiedAt: Date,
+      verifiedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    },
+    // State registration (varies by Australian state)
+    stateRegistration: {
+      registrationNumber: String,
+      state: String, // NSW, VIC, QLD, SA, WA, TAS, NT, ACT
+      expirationDate: Date,
+      documentUrl: String,
+      verified: { type: Boolean, default: false },
+      verifiedAt: Date,
+      verifiedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    },
+    // Professional indemnity insurance
+    professionalIndemnityInsurance: {
+      provider: String,
+      policyNumber: String,
+      coverageAmount: String,
+      expirationDate: Date,
+      documentUrl: String,
+      verified: { type: Boolean, default: false },
+      verifiedAt: Date,
+      verifiedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    },
+    // Working with Children Check (WWCC)
+    workingWithChildrenCheck: {
+      checkNumber: String,
+      state: String,
+      expirationDate: Date,
+      documentUrl: String,
+      verified: { type: Boolean, default: false },
+      verifiedAt: Date,
+      verifiedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    },
+    // Police check / National Police Check
+    policeCheck: {
+      checkNumber: String,
+      issueDate: Date,
+      expirationDate: Date,
+      documentUrl: String,
+      verified: { type: Boolean, default: false },
+      verifiedAt: Date,
+      verifiedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    },
+    // Academic qualifications
+    academicQualifications: [{
+      degree: String, // Bachelor, Master, PhD, etc.
+      institution: String,
+      year: Number,
+      documentUrl: String,
+      verified: { type: Boolean, default: false },
+      verifiedAt: Date,
+      verifiedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    }],
+    // Additional certifications
+    additionalCredentials: [{
+      name: String,
+      issuer: String,
+      expirationDate: Date,
+      documentUrl: String,
+      verified: { type: Boolean, default: false },
+      verifiedAt: Date,
+      verifiedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    }],
+    // Legacy support for US-based fields
     stateLicense: {
       number: String,
       state: String,
       expirationDate: Date,
+      documentUrl: String,
       verified: { type: Boolean, default: false },
       verifiedAt: Date,
       verifiedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
@@ -139,18 +218,11 @@ const therapistSchema = new mongoose.Schema({
       provider: String,
       policyNumber: String,
       expirationDate: Date,
+      documentUrl: String,
       verified: { type: Boolean, default: false },
       verifiedAt: Date,
       verifiedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     },
-    additionalCredentials: [{
-      name: String,
-      issuer: String,
-      expirationDate: Date,
-      verified: { type: Boolean, default: false },
-      verifiedAt: Date,
-      verifiedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-    }],
   },
   // Admin notes
   adminNotes: [{

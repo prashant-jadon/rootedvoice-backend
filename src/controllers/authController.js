@@ -32,14 +32,87 @@ const register = asyncHandler(async (req, res) => {
 
   // Create role-specific profile
   if (role === 'therapist') {
-    await Therapist.create({
+    // Validate credentials
+    if (!additionalData.credentials || !['SLP', 'SLPA'].includes(additionalData.credentials)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Valid credentials (SLP or SLPA) are required',
+      });
+    }
+
+    // Validate required fields for Australia
+    if (!additionalData.licenseNumber && !additionalData.spaMembershipNumber) {
+      return res.status(400).json({
+        success: false,
+        message: 'License number or SPA membership number is required',
+      });
+    }
+
+    // Get rate caps for validation
+    const { getRateCapsForUse } = require('./pricingController');
+    const rateCaps = getRateCapsForUse();
+    const maxRate = rateCaps[additionalData.credentials] || rateCaps.SLP;
+    const hourlyRate = additionalData.hourlyRate || (additionalData.credentials === 'SLP' ? 75 : 55);
+    
+    if (hourlyRate > maxRate) {
+      return res.status(400).json({
+        success: false,
+        message: `Hourly rate for ${additionalData.credentials} cannot exceed $${maxRate}/hour`,
+      });
+    }
+
+    // Create therapist with pending status (requires admin verification)
+    const therapist = await Therapist.create({
       userId: user._id,
-      licenseNumber: additionalData.licenseNumber || 'TEMP-' + Date.now(),
+      licenseNumber: additionalData.licenseNumber || additionalData.spaMembershipNumber || 'TEMP-' + Date.now(),
       licensedStates: additionalData.licensedStates || [],
       specializations: additionalData.specializations || [],
-      hourlyRate: additionalData.hourlyRate || 85,
-      credentials: additionalData.credentials || 'SLP',
+      hourlyRate: hourlyRate,
+      credentials: additionalData.credentials,
+      status: 'pending', // Start as pending until admin verifies
+      isVerified: false,
+      practiceLocation: additionalData.practiceLocation || {},
+      // Initialize compliance documents structure
+      complianceDocuments: {
+        spaMembership: additionalData.spaMembership ? {
+          membershipNumber: additionalData.spaMembership.membershipNumber,
+          membershipType: additionalData.spaMembership.membershipType,
+          expirationDate: additionalData.spaMembership.expirationDate,
+          documentUrl: additionalData.spaMembership.documentUrl,
+        } : {},
+        stateRegistration: additionalData.stateRegistration ? {
+          registrationNumber: additionalData.stateRegistration.registrationNumber,
+          state: additionalData.stateRegistration.state,
+          expirationDate: additionalData.stateRegistration.expirationDate,
+          documentUrl: additionalData.stateRegistration.documentUrl,
+        } : {},
+        professionalIndemnityInsurance: additionalData.professionalIndemnityInsurance ? {
+          provider: additionalData.professionalIndemnityInsurance.provider,
+          policyNumber: additionalData.professionalIndemnityInsurance.policyNumber,
+          coverageAmount: additionalData.professionalIndemnityInsurance.coverageAmount,
+          expirationDate: additionalData.professionalIndemnityInsurance.expirationDate,
+          documentUrl: additionalData.professionalIndemnityInsurance.documentUrl,
+        } : {},
+        workingWithChildrenCheck: additionalData.workingWithChildrenCheck ? {
+          checkNumber: additionalData.workingWithChildrenCheck.checkNumber,
+          state: additionalData.workingWithChildrenCheck.state,
+          expirationDate: additionalData.workingWithChildrenCheck.expirationDate,
+          documentUrl: additionalData.workingWithChildrenCheck.documentUrl,
+        } : {},
+        policeCheck: additionalData.policeCheck ? {
+          checkNumber: additionalData.policeCheck.checkNumber,
+          issueDate: additionalData.policeCheck.issueDate,
+          expirationDate: additionalData.policeCheck.expirationDate,
+          documentUrl: additionalData.policeCheck.documentUrl,
+        } : {},
+        academicQualifications: additionalData.academicQualifications || [],
+      },
     });
+
+    // Ensure status is explicitly set to pending
+    therapist.status = 'pending'
+    therapist.isVerified = false
+    await therapist.save()
   } else if (role === 'client') {
     await Client.create({
       userId: user._id,
