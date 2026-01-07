@@ -17,6 +17,7 @@ const {
   getTherapistEarnings,
   getAllTherapistsEarnings,
   updateTherapistStatus,
+  updateTherapistSupervising,
   verifyTherapistCompliance,
   getTherapistActivity,
   getIncompleteTherapistProfiles,
@@ -49,6 +50,7 @@ router.put('/therapists/credentials/bulk', bulkUpdateTherapistCredentials);
 router.get('/therapists/earnings', getAllTherapistsEarnings);
 router.get('/therapists/:id/earnings', getTherapistEarnings);
 router.put('/therapists/:id/status', updateTherapistStatus);
+router.put('/therapists/:id/supervising', updateTherapistSupervising);
 router.put('/therapists/:id/verify-compliance', verifyTherapistCompliance);
 router.get('/therapists/:id/activity', getTherapistActivity);
 router.get('/therapists/incomplete', getIncompleteTherapistProfiles);

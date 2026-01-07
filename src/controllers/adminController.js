@@ -859,6 +859,42 @@ const updateTherapistStatus = asyncHandler(async (req, res) => {
   });
 });
 
+// @desc    Update therapist supervising status
+// @route   PUT /api/admin/therapists/:id/supervising
+// @access  Private/Admin
+const updateTherapistSupervising = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { canSupervise } = req.body;
+
+  const therapist = await Therapist.findById(id);
+  if (!therapist) {
+    return res.status(404).json({
+      success: false,
+      message: 'Therapist not found',
+    });
+  }
+
+  // Only SLPs can supervise
+  if (therapist.credentials !== 'SLP') {
+    return res.status(400).json({
+      success: false,
+      message: 'Only SLPs can be designated as supervisors',
+    });
+  }
+
+  therapist.canSupervise = canSupervise === true;
+  await therapist.save();
+
+  const updatedTherapist = await Therapist.findById(id)
+    .populate('userId', 'firstName lastName email avatar phone');
+
+  res.json({
+    success: true,
+    message: `Therapist supervising status updated to ${therapist.canSupervise ? 'can supervise' : 'cannot supervise'}`,
+    data: updatedTherapist,
+  });
+});
+
 // @desc    Verify therapist compliance documents
 // @route   PUT /api/admin/therapists/:id/verify-compliance
 // @access  Private/Admin
@@ -1224,6 +1260,7 @@ module.exports = {
   getTherapistEarnings,
   getAllTherapistsEarnings,
   updateTherapistStatus,
+  updateTherapistSupervising,
   verifyTherapistCompliance,
   getTherapistActivity,
   getIncompleteTherapistProfiles,

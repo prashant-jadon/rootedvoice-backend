@@ -131,6 +131,11 @@ const therapistSchema = new mongoose.Schema({
     enum: ['SLP', 'SLPA'],
     default: 'SLP',
   },
+  canSupervise: {
+    type: Boolean,
+    default: false,
+    comment: 'Indicates if this SLP can supervise SLPA assistants',
+  },
   // Compliance documents
   complianceDocuments: {
     // Australia-specific: Speech Pathology Australia (SPA) membership
