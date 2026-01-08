@@ -58,8 +58,8 @@ let PAYMENT_SPLIT = {
     therapistFeePercent: 80, // Therapist gets 80%
   },
   SLPA: {
-    platformFeePercent: 20, // Platform gets 20%
-    therapistFeePercent: 80, // Therapist gets 80%
+  platformFeePercent: 20, // Platform gets 20%
+  therapistFeePercent: 80, // Therapist gets 80%
   },
 };
 
@@ -204,9 +204,9 @@ const updatePaymentSplit = asyncHandler(async (req, res) => {
       therapistFeePercent: 100 - platformFeePercent,
     };
     PAYMENT_SPLIT.SLPA = {
-      platformFeePercent,
-      therapistFeePercent: 100 - platformFeePercent,
-    };
+    platformFeePercent,
+    therapistFeePercent: 100 - platformFeePercent,
+  };
   }
 
   res.json({

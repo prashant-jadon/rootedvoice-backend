@@ -400,6 +400,129 @@ const getMyProfile = asyncHandler(async (req, res) => {
   });
 });
 
+// @desc    Get therapist payments
+// @route   GET /api/therapists/me/payments
+// @access  Private (Therapist)
+const getMyPayments = asyncHandler(async (req, res) => {
+  const therapist = await Therapist.findOne({ userId: req.user._id });
+  
+  if (!therapist) {
+    return res.status(404).json({
+      success: false,
+      message: 'Therapist profile not found',
+    });
+  }
+
+  const Payment = require('../models/Payment');
+  const { status, startDate, endDate, page = 1, limit = 50 } = req.query;
+  
+  const query = { therapistId: therapist._id };
+  if (status) query.status = status;
+  if (startDate || endDate) {
+    query.createdAt = {};
+    if (startDate) query.createdAt.$gte = new Date(startDate);
+    if (endDate) query.createdAt.$lte = new Date(endDate);
+  }
+
+  const skip = (parseInt(page) - 1) * parseInt(limit);
+  
+  const payments = await Payment.find(query)
+    .populate({
+      path: 'clientId',
+      populate: { path: 'userId', select: 'firstName lastName email' }
+    })
+    .populate({
+      path: 'sessionId',
+      select: 'date time duration serviceType'
+    })
+    .sort({ createdAt: -1 })
+    .skip(skip)
+    .limit(parseInt(limit));
+
+  const total = await Payment.countDocuments(query);
+
+  // Calculate stats
+  const now = new Date();
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const endOfLastMonth = new Date(now.getFullYear(), now.getMonth(), 0);
+
+  // Total revenue
+  const totalRevenueData = await Payment.aggregate([
+    { $match: { therapistId: therapist._id, status: 'completed' } },
+    { $group: { _id: null, total: { $sum: '$amount' } } },
+  ]);
+  const totalRevenue = totalRevenueData[0]?.total || 0;
+
+  // This month revenue
+  const thisMonthData = await Payment.aggregate([
+    { 
+      $match: { 
+        therapistId: therapist._id, 
+        status: 'completed',
+        createdAt: { $gte: startOfMonth }
+      } 
+    },
+    { $group: { _id: null, total: { $sum: '$amount' } } },
+  ]);
+  const thisMonthRevenue = thisMonthData[0]?.total || 0;
+
+  // Last month revenue for comparison
+  const lastMonthData = await Payment.aggregate([
+    { 
+      $match: { 
+        therapistId: therapist._id, 
+        status: 'completed',
+        createdAt: { $gte: startOfLastMonth, $lte: endOfLastMonth }
+      } 
+    },
+    { $group: { _id: null, total: { $sum: '$amount' } } },
+  ]);
+  const lastMonthRevenue = lastMonthData[0]?.total || 0;
+
+  // Pending payments
+  const pendingData = await Payment.aggregate([
+    { 
+      $match: { 
+        therapistId: therapist._id, 
+        status: { $in: ['pending', 'processing'] }
+      } 
+    },
+    { $group: { _id: null, total: { $sum: '$amount' } } },
+  ]);
+  const pendingAmount = pendingData[0]?.total || 0;
+
+  // Completed sessions count
+  const Session = require('../models/Session');
+  const completedSessions = await Session.countDocuments({
+    therapistId: therapist._id,
+    status: 'completed'
+  });
+
+  // Calculate month-over-month change
+  const monthChange = lastMonthRevenue > 0 
+    ? ((thisMonthRevenue - lastMonthRevenue) / lastMonthRevenue * 100).toFixed(1)
+    : thisMonthRevenue > 0 ? '100.0' : '0.0';
+
+  res.json({
+    success: true,
+    data: payments,
+    stats: {
+      totalRevenue,
+      thisMonthRevenue,
+      pendingAmount,
+      completedSessions,
+      monthChange: parseFloat(monthChange),
+    },
+    pagination: {
+      page: parseInt(page),
+      limit: parseInt(limit),
+      total,
+      pages: Math.ceil(total / parseInt(limit)),
+    },
+  });
+});
+
 module.exports = {
   getTherapists,
   getTherapist,
@@ -408,4 +531,5 @@ module.exports = {
   updateAvailability,
   getTherapistStats,
   uploadDocuments,
+  getMyPayments,
 };

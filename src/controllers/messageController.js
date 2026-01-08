@@ -54,26 +54,30 @@ const getConversations = asyncHandler(async (req, res) => {
       }
     }
     
-    // Also check for support chat
+    // Also check for support chat (messages with any admin)
     const supportUser = await User.findOne({ 
       role: 'admin',
       email: { $regex: /support/i }
     });
-    if (supportUser) {
-      // Check if there are messages with support
+    
+    // Check if there are messages with any admin user
+    const adminUsers = await User.find({ role: 'admin' }).select('_id');
+    const adminIds = adminUsers.map(u => u._id);
+    
+    if (adminIds.length > 0) {
       const supportMessages = await Message.findOne({
         $or: [
-          { senderId: userId, receiverId: supportUser._id },
-          { senderId: supportUser._id, receiverId: userId },
+          { senderId: userId, receiverId: { $in: adminIds } },
+          { senderId: { $in: adminIds }, receiverId: userId },
         ],
       });
       
       if (supportMessages) {
-        // Return support conversation
+        // Get all messages with any admin
         const messages = await Message.find({
           $or: [
-            { senderId: userId, receiverId: supportUser._id },
-            { senderId: supportUser._id, receiverId: userId },
+            { senderId: userId, receiverId: { $in: adminIds } },
+            { senderId: { $in: adminIds }, receiverId: userId },
           ],
         })
           .populate('senderId', 'firstName lastName avatar')
@@ -82,18 +86,21 @@ const getConversations = asyncHandler(async (req, res) => {
 
         const unreadCount = await Message.countDocuments({
           receiverId: userId,
-          senderId: supportUser._id,
+          senderId: { $in: adminIds },
           isRead: false,
         });
+
+        // Use support user for participant info, or first admin if support user doesn't exist
+        const participantUser = supportUser || adminUsers[0];
 
         return res.json({
           success: true,
           data: [{
             participant: {
-              _id: supportUser._id,
-              firstName: supportUser.firstName,
-              lastName: supportUser.lastName,
-              avatar: supportUser.avatar,
+              _id: participantUser._id,
+              firstName: participantUser.firstName,
+              lastName: participantUser.lastName,
+              avatar: participantUser.avatar,
             },
             messages,
             unreadCount,
@@ -111,15 +118,16 @@ const getConversations = asyncHandler(async (req, res) => {
         email: { $regex: /support/i }
       });
       
+      // Get all admin users (for support chat)
+      const adminUsers = await User.find({ role: 'admin' }).select('_id');
+      const adminIds = adminUsers.map(u => u._id);
+      
       // Get all clients assigned to this therapist
       const clients = await Client.find({ assignedTherapist: therapist._id });
       const clientUserIds = clients.map(c => c.userId);
       
-      // Get all unique conversations (including support)
-      const allUserIds = [...clientUserIds];
-      if (supportUser) {
-        allUserIds.push(supportUser._id);
-      }
+      // Get all unique conversations (including support from any admin)
+      const allUserIds = [...clientUserIds, ...adminIds];
       
       const conversations = await Message.aggregate([
         {
@@ -161,7 +169,8 @@ const getConversations = asyncHandler(async (req, res) => {
       const populatedConversations = await Promise.all(
         conversations.map(async (conv) => {
           const participant = await User.findById(conv._id).select('firstName lastName avatar email role');
-          const isSupport = supportUser && conv._id.toString() === supportUser._id.toString();
+          // Check if participant is any admin (support)
+          const isSupport = participant && participant.role === 'admin';
           return {
             ...conv,
             participant,
@@ -219,9 +228,9 @@ const getMessages = asyncHandler(async (req, res) => {
   const userId = req.user._id;
   const otherUserId = req.params.userId;
 
-  // Check if other user is support (allow messaging support)
+  // Check if other user is support/admin (allow messaging support)
   const otherUser = await User.findById(otherUserId);
-  const isSupportChat = otherUser && otherUser.role === 'admin' && otherUser.email.includes('support');
+  const isSupportChat = otherUser && otherUser.role === 'admin';
 
   // Verify authorization (skip for support chat)
   if (!isSupportChat) {
@@ -250,26 +259,58 @@ const getMessages = asyncHandler(async (req, res) => {
     }
   }
 
-  const messages = await Message.find({
-    $or: [
-      { senderId: userId, receiverId: otherUserId },
-      { senderId: otherUserId, receiverId: userId },
-    ],
-    isDeleted: { $ne: true },
-  })
+  // If this is a support chat, get messages from any admin, not just the specific admin
+  let messageQuery;
+  if (isSupportChat) {
+    // Get all admin user IDs
+    const adminUsers = await User.find({ role: 'admin' }).select('_id');
+    const adminIds = adminUsers.map(u => u._id);
+    
+    messageQuery = {
+      $or: [
+        { senderId: userId, receiverId: { $in: adminIds } },
+        { senderId: { $in: adminIds }, receiverId: userId },
+      ],
+      isDeleted: { $ne: true },
+    };
+  } else {
+    messageQuery = {
+      $or: [
+        { senderId: userId, receiverId: otherUserId },
+        { senderId: otherUserId, receiverId: userId },
+      ],
+      isDeleted: { $ne: true },
+    };
+  }
+
+  const messages = await Message.find(messageQuery)
     .populate('senderId', 'firstName lastName avatar')
     .populate('receiverId', 'firstName lastName avatar')
     .sort({ createdAt: 1 });
 
   // Mark messages as read
-  await Message.updateMany(
-    {
-      senderId: otherUserId,
-      receiverId: userId,
-      isRead: false,
-    },
-    { isRead: true, readAt: new Date() }
-  );
+  if (isSupportChat) {
+    // Mark all unread messages from any admin as read
+    const adminUsers = await User.find({ role: 'admin' }).select('_id');
+    const adminIds = adminUsers.map(u => u._id);
+    await Message.updateMany(
+      {
+        senderId: { $in: adminIds },
+        receiverId: userId,
+        isRead: false,
+      },
+      { isRead: true, readAt: new Date() }
+    );
+  } else {
+    await Message.updateMany(
+      {
+        senderId: otherUserId,
+        receiverId: userId,
+        isRead: false,
+      },
+      { isRead: true, readAt: new Date() }
+    );
+  }
 
   res.json({
     success: true,
@@ -302,9 +343,9 @@ const sendMessage = asyncHandler(async (req, res) => {
     });
   }
 
-  // Check if receiver is support (special handling for support chat)
+  // Check if receiver is support/admin (special handling for support chat)
   const receiverUser = await User.findById(receiverId);
-  const isSupportChat = receiverUser && receiverUser.role === 'admin' && receiverUser.email.includes('support');
+  const isSupportChat = receiverUser && receiverUser.role === 'admin';
 
   // Verify authorization (skip for support chat)
   if (!isSupportChat) {

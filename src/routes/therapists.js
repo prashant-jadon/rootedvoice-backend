@@ -8,6 +8,7 @@ const {
   updateAvailability,
   getTherapistStats,
   uploadDocuments,
+  getMyPayments,
 } = require('../controllers/therapistController');
 const { protect, optionalAuth } = require('../middlewares/auth');
 const { isTherapist } = require('../middlewares/roleCheck');
@@ -18,6 +19,7 @@ router.get('/', optionalAuth, getTherapists);
 
 // Protected routes - Therapist only
 router.get('/me', protect, isTherapist, getMyProfile);
+router.get('/me/payments', protect, isTherapist, getMyPayments);
 router.post('/', protect, isTherapist, createOrUpdateTherapist);
 router.post('/upload-documents', protect, isTherapist, upload.fields([
   { name: 'spaMembership', maxCount: 1 },

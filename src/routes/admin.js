@@ -21,6 +21,10 @@ const {
   verifyTherapistCompliance,
   getTherapistActivity,
   getIncompleteTherapistProfiles,
+  suspendUser,
+  activateUser,
+  bulkUserAction,
+  getAdminActionLogs,
 } = require('../controllers/adminController');
 const {
   getPricingTiers,
@@ -42,6 +46,9 @@ router.get('/stats', getDashboardStats);
 
 // User management
 router.get('/users', getAllUsers);
+router.post('/users/:id/suspend', suspendUser);
+router.post('/users/:id/activate', activateUser);
+router.post('/users/bulk-action', bulkUserAction);
 
 // Therapist management
 router.get('/therapists', getAllTherapists);
@@ -84,6 +91,9 @@ router.put('/payment-split', updatePaymentSplit);
 // Rate caps configuration
 router.get('/rate-caps', getRateCaps);
 router.put('/rate-caps', updateRateCaps);
+
+// Admin action logs
+router.get('/action-logs', getAdminActionLogs);
 
 module.exports = router;
 

@@ -4,7 +4,9 @@ const Client = require('../models/Client');
 const Payment = require('../models/Payment');
 const Subscription = require('../models/Subscription');
 const Session = require('../models/Session');
+const AdminActionLog = require('../models/AdminActionLog');
 const { asyncHandler } = require('../middlewares/errorHandler');
+const { logAdminAction, getClientIp, getUserAgent } = require('../utils/adminLogger');
 
 // @desc    Get all users
 // @route   GET /api/admin/users
@@ -460,8 +462,28 @@ const updateTherapistCredentials = asyncHandler(async (req, res) => {
     therapist.hourlyRate = maxRate;
   }
 
+  const oldCredentials = therapist.credentials;
   therapist.credentials = credentials;
   await therapist.save();
+
+  // Log the action
+  const therapistName = therapist.userId 
+    ? `${therapist.userId.firstName} ${therapist.userId.lastName}`
+    : 'Unknown';
+
+  await logAdminAction({
+    adminId: req.user._id,
+    action: 'therapist_credentials_updated',
+    targetType: 'therapist',
+    targetId: id,
+    targetName: therapistName,
+    details: {
+      oldCredentials,
+      newCredentials: credentials,
+    },
+    ipAddress: getClientIp(req),
+    userAgent: getUserAgent(req),
+  });
 
   const updatedTherapist = await Therapist.findById(id)
     .populate('userId', 'firstName lastName email avatar phone');
@@ -847,7 +869,41 @@ const updateTherapistStatus = asyncHandler(async (req, res) => {
     therapist.pauseReason = null;
   }
 
+  const oldStatus = therapist.status;
   await therapist.save();
+
+  // Log the action
+  const therapistName = therapist.userId 
+    ? `${therapist.userId.firstName} ${therapist.userId.lastName}`
+    : 'Unknown';
+  
+  let actionType = 'therapist_status_changed';
+  if (status === 'active' && oldStatus === 'pending') {
+    actionType = 'therapist_approved';
+  } else if (status === 'inactive' && oldStatus === 'pending') {
+    actionType = 'therapist_rejected';
+  } else if (status === 'paused') {
+    actionType = 'therapist_paused';
+  } else if (status === 'active' && oldStatus === 'paused') {
+    actionType = 'therapist_activated';
+  }
+
+  await logAdminAction({
+    adminId: req.user._id,
+    action: actionType,
+    targetType: 'therapist',
+    targetId: id,
+    targetName: therapistName,
+    details: {
+      oldStatus,
+      newStatus: status,
+    },
+    metadata: {
+      reason: reason || null,
+    },
+    ipAddress: getClientIp(req),
+    userAgent: getUserAgent(req),
+  });
 
   const updatedTherapist = await Therapist.findById(id)
     .populate('userId', 'firstName lastName email avatar phone');
@@ -882,8 +938,28 @@ const updateTherapistSupervising = asyncHandler(async (req, res) => {
     });
   }
 
+  const oldSupervisingStatus = therapist.canSupervise || false;
   therapist.canSupervise = canSupervise === true;
   await therapist.save();
+
+  // Log the action
+  const therapistName = therapist.userId 
+    ? `${therapist.userId.firstName} ${therapist.userId.lastName}`
+    : 'Unknown';
+
+  await logAdminAction({
+    adminId: req.user._id,
+    action: 'therapist_supervising_updated',
+    targetType: 'therapist',
+    targetId: id,
+    targetName: therapistName,
+    details: {
+      oldCanSupervise: oldSupervisingStatus,
+      newCanSupervise: therapist.canSupervise,
+    },
+    ipAddress: getClientIp(req),
+    userAgent: getUserAgent(req),
+  });
 
   const updatedTherapist = await Therapist.findById(id)
     .populate('userId', 'firstName lastName email avatar phone');
@@ -1005,6 +1081,29 @@ const verifyTherapistCompliance = asyncHandler(async (req, res) => {
       addedAt: new Date(),
     });
   }
+
+  // Log the document verification action
+  const therapistName = therapist.userId 
+    ? `${therapist.userId.firstName} ${therapist.userId.lastName}`
+    : 'Unknown';
+
+  await logAdminAction({
+    adminId: req.user._id,
+    action: verified === true ? 'therapist_document_verified' : 'therapist_document_rejected',
+    targetType: 'document',
+    targetId: id,
+    targetName: `${therapistName} - ${documentType}`,
+    details: {
+      documentType,
+      verified: verified === true,
+      therapistId: id,
+    },
+    metadata: {
+      notes: notes || null,
+    },
+    ipAddress: getClientIp(req),
+    userAgent: getUserAgent(req),
+  });
 
   // Check if all required documents are verified to auto-activate
   // Australia-specific documents
@@ -1245,6 +1344,208 @@ const getIncompleteTherapistProfiles = asyncHandler(async (req, res) => {
   });
 });
 
+// @desc    Suspend a user
+// @route   POST /api/admin/users/:id/suspend
+// @access  Private/Admin
+const suspendUser = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { reason } = req.body;
+
+  const user = await User.findById(id);
+  if (!user) {
+    return res.status(404).json({
+      success: false,
+      message: 'User not found',
+    });
+  }
+
+  const wasActive = user.isActive;
+  user.isActive = false;
+  await user.save();
+
+  // Log the action
+  const userName = `${user.firstName} ${user.lastName} (${user.email})`;
+  
+  await logAdminAction({
+    adminId: req.user._id,
+    action: 'user_suspended',
+    targetType: 'user',
+    targetId: id,
+    targetName: userName,
+    details: {
+      wasActive,
+      isActive: false,
+      userRole: user.role,
+    },
+    metadata: {
+      reason: reason || null,
+    },
+    ipAddress: getClientIp(req),
+    userAgent: getUserAgent(req),
+  });
+
+  res.json({
+    success: true,
+    message: 'User suspended successfully',
+    data: user,
+  });
+});
+
+// @desc    Activate a user
+// @route   POST /api/admin/users/:id/activate
+// @access  Private/Admin
+const activateUser = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+
+  const user = await User.findById(id);
+  if (!user) {
+    return res.status(404).json({
+      success: false,
+      message: 'User not found',
+    });
+  }
+
+  const wasActive = user.isActive;
+  user.isActive = true;
+  await user.save();
+
+  // Log the action
+  const userName = `${user.firstName} ${user.lastName} (${user.email})`;
+  
+  await logAdminAction({
+    adminId: req.user._id,
+    action: 'user_activated',
+    targetType: 'user',
+    targetId: id,
+    targetName: userName,
+    details: {
+      wasActive,
+      isActive: true,
+      userRole: user.role,
+    },
+    ipAddress: getClientIp(req),
+    userAgent: getUserAgent(req),
+  });
+
+  res.json({
+    success: true,
+    message: 'User activated successfully',
+    data: user,
+  });
+});
+
+// @desc    Bulk user action (suspend/activate)
+// @route   POST /api/admin/users/bulk-action
+// @access  Private/Admin
+const bulkUserAction = asyncHandler(async (req, res) => {
+  const { userIds, action } = req.body;
+
+  if (!userIds || !Array.isArray(userIds) || userIds.length === 0) {
+    return res.status(400).json({
+      success: false,
+      message: 'userIds must be a non-empty array',
+    });
+  }
+
+  if (!['suspend', 'activate'].includes(action)) {
+    return res.status(400).json({
+      success: false,
+      message: 'action must be either "suspend" or "activate"',
+    });
+  }
+
+  const isActive = action === 'activate';
+  const users = await User.find({ _id: { $in: userIds } });
+  
+  const updatePromises = users.map(user => {
+    user.isActive = isActive;
+    return user.save();
+  });
+
+  await Promise.all(updatePromises);
+
+  // Log the bulk action
+  const userNames = users.map(u => `${u.firstName} ${u.lastName} (${u.email})`).join(', ');
+  
+  await logAdminAction({
+    adminId: req.user._id,
+    action: 'user_bulk_action',
+    targetType: 'user',
+    targetId: userIds[0], // Use first ID as primary target
+    targetName: `${action} ${userIds.length} users`,
+    details: {
+      action,
+      userIds,
+      count: userIds.length,
+      isActive,
+    },
+    metadata: {
+      userNames,
+    },
+    ipAddress: getClientIp(req),
+    userAgent: getUserAgent(req),
+  });
+
+  res.json({
+    success: true,
+    message: `${action === 'suspend' ? 'Suspended' : 'Activated'} ${userIds.length} user(s) successfully`,
+    data: {
+      count: userIds.length,
+      action,
+    },
+  });
+});
+
+// @desc    Get admin action logs
+// @route   GET /api/admin/action-logs
+// @access  Private/Admin
+const getAdminActionLogs = asyncHandler(async (req, res) => {
+  const { 
+    adminId, 
+    action, 
+    targetType, 
+    targetId, 
+    startDate, 
+    endDate, 
+    page = 1, 
+    limit = 50 
+  } = req.query;
+
+  const query = {};
+  
+  if (adminId) query.adminId = adminId;
+  if (action) query.action = action;
+  if (targetType) query.targetType = targetType;
+  if (targetId) query.targetId = targetId;
+  
+  if (startDate || endDate) {
+    query.createdAt = {};
+    if (startDate) query.createdAt.$gte = new Date(startDate);
+    if (endDate) query.createdAt.$lte = new Date(endDate);
+  }
+
+  const skip = (parseInt(page) - 1) * parseInt(limit);
+
+  const logs = await AdminActionLog.find(query)
+    .populate('adminId', 'firstName lastName email')
+    .sort({ createdAt: -1 })
+    .skip(skip)
+    .limit(parseInt(limit));
+
+  const total = await AdminActionLog.countDocuments(query);
+
+  res.json({
+    success: true,
+    data: logs,
+    pagination: {
+      page: parseInt(page),
+      limit: parseInt(limit),
+      total,
+      pages: Math.ceil(total / parseInt(limit)),
+    },
+  });
+});
+
 module.exports = {
   getAllUsers,
   getAllTherapists,
@@ -1264,5 +1565,9 @@ module.exports = {
   verifyTherapistCompliance,
   getTherapistActivity,
   getIncompleteTherapistProfiles,
+  suspendUser,
+  activateUser,
+  bulkUserAction,
+  getAdminActionLogs,
 };
 
