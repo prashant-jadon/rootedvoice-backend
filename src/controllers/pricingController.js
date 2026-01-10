@@ -83,14 +83,15 @@ let PRICING_TIERS = {
 };
 
 // Payment split configuration (platform fee %) - differentiated by credential type
+// Therapist gets 55%, Rooted Voices (Platform) gets 45%
 let PAYMENT_SPLIT = {
   SLP: {
-    platformFeePercent: 20, // Platform gets 20%
-    therapistFeePercent: 80, // Therapist gets 80%
+    platformFeePercent: 45, // Rooted Voices gets 45%
+    therapistFeePercent: 55, // Therapist gets 55%
   },
   SLPA: {
-  platformFeePercent: 20, // Platform gets 20%
-  therapistFeePercent: 80, // Therapist gets 80%
+    platformFeePercent: 45, // Rooted Voices gets 45%
+    therapistFeePercent: 55, // Therapist gets 55%
   },
 };
 
