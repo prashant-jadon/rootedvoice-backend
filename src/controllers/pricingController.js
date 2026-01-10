@@ -168,7 +168,7 @@ const deletePricingTier = asyncHandler(async (req, res) => {
 // @route   POST /api/admin/pricing
 // @access  Private/Admin
 const createPricingTier = asyncHandler(async (req, res) => {
-  const { tier, name, price, duration, durationRange, billingCycle, sessionsPerMonth, features, description, icon, popular, monthlyPrice, perSessionPrice } = req.body;
+  const { tier, name, price, duration, billingCycle, sessionsPerMonth, features, description, icon, popular, monthlyPrice, perSessionPrice, durationRange } = req.body;
 
   if (!tier || !name || !price) {
     return res.status(400).json({
@@ -188,7 +188,6 @@ const createPricingTier = asyncHandler(async (req, res) => {
     name,
     price,
     duration: duration || 60,
-    durationRange: durationRange || '',
     billingCycle: billingCycle || 'monthly',
     sessionsPerMonth: sessionsPerMonth || 0,
     features: features || [],
@@ -197,6 +196,7 @@ const createPricingTier = asyncHandler(async (req, res) => {
     popular: popular || false,
     monthlyPrice: monthlyPrice || price,
     perSessionPrice: perSessionPrice || (sessionsPerMonth > 0 ? price / sessionsPerMonth : price),
+    durationRange: durationRange || '',
   };
 
   res.status(201).json({
