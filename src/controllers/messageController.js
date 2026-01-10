@@ -275,11 +275,11 @@ const getMessages = asyncHandler(async (req, res) => {
     };
   } else {
     messageQuery = {
-      $or: [
-        { senderId: userId, receiverId: otherUserId },
-        { senderId: otherUserId, receiverId: userId },
-      ],
-      isDeleted: { $ne: true },
+    $or: [
+      { senderId: userId, receiverId: otherUserId },
+      { senderId: otherUserId, receiverId: userId },
+    ],
+    isDeleted: { $ne: true },
     };
   }
 
@@ -302,14 +302,14 @@ const getMessages = asyncHandler(async (req, res) => {
       { isRead: true, readAt: new Date() }
     );
   } else {
-    await Message.updateMany(
-      {
-        senderId: otherUserId,
-        receiverId: userId,
-        isRead: false,
-      },
-      { isRead: true, readAt: new Date() }
-    );
+  await Message.updateMany(
+    {
+      senderId: otherUserId,
+      receiverId: userId,
+      isRead: false,
+    },
+    { isRead: true, readAt: new Date() }
+  );
   }
 
   res.json({
