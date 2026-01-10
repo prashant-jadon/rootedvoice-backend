@@ -8,12 +8,11 @@ const subscriptionSchema = new mongoose.Schema({
   },
   tier: {
     type: String,
-    enum: ['rooted', 'flourish', 'bloom'],
+    enum: ['rooted', 'flourish', 'bloom', 'pay-as-you-go', 'evaluation'],
     required: true,
   },
   tierName: {
     type: String,
-    enum: ['Rooted Tier', 'Flourish Tier', 'Bloom Tier'],
     required: true,
   },
   price: {
@@ -22,7 +21,7 @@ const subscriptionSchema = new mongoose.Schema({
   },
   billingCycle: {
     type: String,
-    enum: ['every-4-weeks', 'pay-as-you-go', 'monthly'],
+    enum: ['every-4-weeks', 'pay-as-you-go', 'monthly', 'one-time'],
     required: true,
   },
   sessionsPerMonth: {

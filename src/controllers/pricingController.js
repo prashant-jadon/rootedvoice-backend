@@ -5,12 +5,12 @@ const { asyncHandler } = require('../middlewares/errorHandler');
 let PRICING_TIERS = {
   rooted: {
     name: 'Rooted Tier',
-    price: 50,
-    duration: 30,
-    billingCycle: 'every-4-weeks',
-    sessionsPerMonth: 4,
+    price: 229,
+    duration: 45,
+    billingCycle: 'monthly',
+    sessionsPerMonth: 2,
     features: [
-      '2-4 sessions per month',
+      '2 sessions per month (45 minutes each)',
       'Personalized treatment plan',
       'Progress updates every 8-10 weeks',
       'Caregiver tips',
@@ -20,12 +20,12 @@ let PRICING_TIERS = {
   },
   flourish: {
     name: 'Flourish Tier',
-    price: 85,
-    duration: 60,
-    billingCycle: 'every-4-weeks',
+    price: 439,
+    duration: 45,
+    billingCycle: 'monthly',
     sessionsPerMonth: 4,
     features: [
-      'Weekly or bi-weekly sessions',
+      '4 sessions per month (45 minutes each)',
       'Advanced treatment strategies',
       'Detailed monthly progress reports',
       'Monthly family coaching',
@@ -37,16 +37,47 @@ let PRICING_TIERS = {
   },
   bloom: {
     name: 'Bloom Tier',
-    price: 90,
-    duration: 60,
-    billingCycle: 'pay-as-you-go',
-    sessionsPerMonth: 3,
+    price: 749,
+    duration: 45,
+    billingCycle: 'monthly',
+    sessionsPerMonth: 8,
     features: [
-      '2-3 sessions monthly',
+      '8 sessions per month (45 minutes each)',
+      'Intensive therapy support',
       'Flexible scheduling',
-      'Focus on skill maintenance',
-      'No long-term commitment',
-      'Month-to-month flexibility'
+      'Priority access to therapists',
+      'Comprehensive progress tracking',
+      'Monthly family coaching',
+      'Direct messaging access'
+    ]
+  },
+  'pay-as-you-go': {
+    name: 'Pay-As-You-Go',
+    price: 125,
+    duration: 45,
+    billingCycle: 'pay-as-you-go',
+    sessionsPerMonth: 1,
+    features: [
+      '1 session (45 minutes)',
+      'No subscription required',
+      'Flexible scheduling',
+      'Pay per session',
+      'Perfect for occasional support',
+      'HIPAA-compliant platform'
+    ]
+  },
+  evaluation: {
+    name: 'Evaluation',
+    price: 260,
+    duration: 75,
+    billingCycle: 'one-time',
+    sessionsPerMonth: 0,
+    features: [
+      '60-75 minute comprehensive evaluation',
+      'Detailed assessment report',
+      'Treatment recommendations',
+      'No subscription required',
+      'One-time payment'
     ]
   }
 };

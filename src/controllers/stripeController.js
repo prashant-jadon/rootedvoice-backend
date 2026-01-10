@@ -50,8 +50,9 @@ const createCheckoutSession = asyncHandler(async (req, res) => {
     unit_amount: tierInfo.price * 100, // Convert to cents
   };
 
-  // Only add recurring for subscription mode (not pay-as-you-go)
-  if (!isPayAsYouGo) {
+  // Only add recurring for subscription mode (not pay-as-you-go or one-time)
+  const isOneTime = tierInfo.billingCycle === 'one-time' || tierInfo.billingCycle === 'pay-as-you-go';
+  if (!isOneTime) {
     priceData.recurring = {
       interval: tierInfo.billingCycle === 'every-4-weeks' ? 'month' : 'month',
       interval_count: tierInfo.billingCycle === 'every-4-weeks' ? 1 : 1,

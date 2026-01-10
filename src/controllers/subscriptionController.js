@@ -57,6 +57,9 @@ const subscribeToPlan = asyncHandler(async (req, res) => {
     nextBillingDate.setDate(nextBillingDate.getDate() + 28); // 4 weeks
   } else if (tierInfo.billingCycle === 'monthly') {
     nextBillingDate.setMonth(nextBillingDate.getMonth() + 1);
+  } else if (tierInfo.billingCycle === 'one-time') {
+    // Evaluation - no recurring billing
+    nextBillingDate = null;
   } else {
     // pay-as-you-go
     nextBillingDate = null;
