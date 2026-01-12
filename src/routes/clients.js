@@ -6,6 +6,8 @@ const {
   getClient,
   getMyProfile,
   createOrUpdateClient,
+  submitIntake,
+  getIntakeStatus,
   uploadDocument,
   getDocuments,
   deleteDocument,
@@ -18,12 +20,14 @@ const { isTherapist, isClient } = require('../middlewares/roleCheck');
 // Therapist routes
 router.get('/', protect, isTherapist, getClients);
 
-// Client routes
+// Client routes - specific routes must come before parameterized routes
 router.get('/me', protect, isClient, getMyProfile);
 router.post('/', protect, isClient, createOrUpdateClient);
 router.put('/me', protect, isClient, createOrUpdateClient);
+router.post('/intake', protect, isClient, submitIntake);
+router.get('/intake/status', protect, isClient, getIntakeStatus);
 
-// Shared routes
+// Shared routes - parameterized routes must come last
 router.get('/:id', protect, getClient);
 router.post('/:id/documents', protect, upload.single('document'), uploadDocument);
 router.get('/:id/documents', protect, getDocuments);

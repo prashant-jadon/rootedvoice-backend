@@ -121,6 +121,102 @@ const createOrUpdateClient = asyncHandler(async (req, res) => {
   });
 });
 
+// @desc    Submit client intake form
+// @route   POST /api/clients/intake
+// @access  Private (Client)
+const submitIntake = asyncHandler(async (req, res) => {
+  const userId = req.user._id;
+  const {
+    clientType,
+    primaryConcerns,
+    communicationConcerns,
+    stateOfResidence,
+    telehealthConsent,
+    additionalNotes,
+  } = req.body;
+
+  // Validate required fields
+  if (!clientType || !primaryConcerns || !stateOfResidence) {
+    return res.status(400).json({
+      success: false,
+      message: 'Client type, primary concerns, and state of residence are required',
+    });
+  }
+
+  if (!telehealthConsent || !telehealthConsent.consented) {
+    return res.status(400).json({
+      success: false,
+      message: 'Telehealth consent is required',
+    });
+  }
+
+  let client = await Client.findOne({ userId });
+
+  if (!client) {
+    return res.status(404).json({
+      success: false,
+      message: 'Client profile not found. Please complete account setup first.',
+    });
+  }
+
+  // Update intake information
+  client.intake = {
+    clientType,
+    primaryConcerns,
+    communicationConcerns: communicationConcerns || '',
+    stateOfResidence,
+    telehealthConsent: {
+      ...telehealthConsent,
+      consentDate: new Date(),
+    },
+    additionalNotes: additionalNotes || '',
+    intakeCompleted: true,
+    completedAt: new Date(),
+  };
+
+  // Also update address state if provided
+  if (stateOfResidence && !client.address?.state) {
+    if (!client.address) {
+      client.address = {};
+    }
+    client.address.state = stateOfResidence;
+  }
+
+  await client.save();
+
+  const updatedClient = await Client.findById(client._id)
+    .populate('userId', 'firstName lastName email avatar phone');
+
+  res.json({
+    success: true,
+    message: 'Intake form submitted successfully',
+    data: updatedClient,
+  });
+});
+
+// @desc    Get client intake status
+// @route   GET /api/clients/intake/status
+// @access  Private (Client)
+const getIntakeStatus = asyncHandler(async (req, res) => {
+  const userId = req.user._id;
+  const client = await Client.findOne({ userId });
+
+  if (!client) {
+    return res.status(404).json({
+      success: false,
+      message: 'Client profile not found',
+    });
+  }
+
+  res.json({
+    success: true,
+    data: {
+      intakeCompleted: client.intake?.intakeCompleted || false,
+      intake: client.intake || null,
+    },
+  });
+});
+
 // @desc    Upload client document
 // @route   POST /api/clients/:id/documents
 // @access  Private
@@ -605,6 +701,8 @@ module.exports = {
   getClient,
   getMyProfile,
   createOrUpdateClient,
+  submitIntake,
+  getIntakeStatus,
   uploadDocument,
   getDocuments,
   deleteDocument,

@@ -103,7 +103,14 @@ const getAllClients = asyncHandler(async (req, res) => {
   
   const clients = await Client.find(query)
     .populate('userId', 'email firstName lastName phone avatar')
-    .populate('assignedTherapist', 'userId specialization')
+    .populate({
+      path: 'assignedTherapist',
+      populate: {
+        path: 'userId',
+        select: 'firstName lastName email'
+      },
+      select: 'userId specialization'
+    })
     .sort({ createdAt: -1 })
     .skip(skip)
     .limit(parseInt(limit));
@@ -119,6 +126,34 @@ const getAllClients = asyncHandler(async (req, res) => {
       total,
       pages: Math.ceil(total / parseInt(limit)),
     },
+  });
+});
+
+// @desc    Get client by ID (admin)
+// @route   GET /api/admin/clients/:id
+// @access  Private/Admin
+const getClientById = asyncHandler(async (req, res) => {
+  const client = await Client.findById(req.params.id)
+    .populate('userId', 'email firstName lastName phone avatar')
+    .populate({
+      path: 'assignedTherapist',
+      populate: {
+        path: 'userId',
+        select: 'firstName lastName email'
+      },
+      select: 'userId specialization credentials'
+    });
+
+  if (!client) {
+    return res.status(404).json({
+      success: false,
+      message: 'Client not found',
+    });
+  }
+
+  res.json({
+    success: true,
+    data: client,
   });
 });
 
@@ -607,23 +642,27 @@ const getTherapistEarnings = asyncHandler(async (req, res) => {
     ...paymentDateFilter,
   });
 
-  // Calculate earnings from payments (therapist portion)
-  const { getPaymentSplitForUse } = require('./pricingController');
+  // Calculate earnings based on hourly rate (NOT percentage splits)
+  // Therapists are paid their current hourly rate for hours worked
   let totalEarnings = 0;
   let totalRevenue = 0;
 
-  for (const payment of payments) {
-    const session = sessions.find(s => s._id.toString() === payment.sessionId.toString());
-    if (session && session.therapistId) {
-      const credentialType = session.therapistId.credentials || 'SLP';
-      const splitConfig = getPaymentSplitForUse(credentialType);
-      const therapistPortion = Math.round(payment.amount * (splitConfig.therapistFeePercent / 100));
-      totalEarnings += therapistPortion;
-      totalRevenue += payment.amount;
+  for (const session of sessions) {
+    if (session.therapistId) {
+      const hourlyRate = session.therapistId.hourlyRate || (session.therapistId.credentials === 'SLPA' ? 30 : 35);
+      const hoursWorked = (session.duration || 0) / 60; // Convert minutes to hours
+      const sessionEarnings = Math.round(hourlyRate * hoursWorked * 100); // Convert to cents
+      totalEarnings += sessionEarnings;
+      
+      // Total revenue is the session price paid by client
+      const payment = payments.find(p => p.sessionId.toString() === session._id.toString());
+      if (payment) {
+        totalRevenue += payment.amount;
+      }
     }
   }
 
-  // Aggregate earnings by credential type
+  // Aggregate earnings by credential type (based on hourly rate, NOT percentage splits)
   const earningsByCredential = {};
   for (const session of sessions) {
     if (session.therapistId) {
@@ -631,21 +670,13 @@ const getTherapistEarnings = asyncHandler(async (req, res) => {
       if (!earningsByCredential[credentialType]) {
         earningsByCredential[credentialType] = { hours: 0, earnings: 0, sessions: 0 };
       }
-      earningsByCredential[credentialType].hours += (session.duration || 0) / 60;
+      const hoursWorked = (session.duration || 0) / 60;
+      const hourlyRate = session.therapistId.hourlyRate || (credentialType === 'SLPA' ? 30 : 35);
+      const sessionEarnings = Math.round(hourlyRate * hoursWorked * 100); // Convert to cents
+      
+      earningsByCredential[credentialType].hours += hoursWorked;
+      earningsByCredential[credentialType].earnings += sessionEarnings;
       earningsByCredential[credentialType].sessions += 1;
-    }
-  }
-
-  // Calculate earnings for each credential type
-  for (const payment of payments) {
-    const session = sessions.find(s => s._id.toString() === payment.sessionId.toString());
-    if (session && session.therapistId) {
-      const credentialType = session.therapistId.credentials || 'SLP';
-      const splitConfig = getPaymentSplitForUse(credentialType);
-      const therapistPortion = Math.round(payment.amount * (splitConfig.therapistFeePercent / 100));
-      if (earningsByCredential[credentialType]) {
-        earningsByCredential[credentialType].earnings += therapistPortion;
-      }
     }
   }
 
@@ -721,14 +752,14 @@ const getAllTherapistsEarnings = asyncHandler(async (req, res) => {
         ...paymentDateFilter,
       });
 
+      // Calculate earnings based on hourly rate (NOT percentage splits)
       let totalEarnings = 0;
-      for (const payment of payments) {
-        const session = sessions.find(s => s._id.toString() === payment.sessionId.toString());
-        if (session) {
-          const credType = therapist.credentials || 'SLP';
-          const splitConfig = getPaymentSplitForUse(credType);
-          const therapistPortion = Math.round(payment.amount * (splitConfig.therapistFeePercent / 100));
-          totalEarnings += therapistPortion;
+      for (const session of sessions) {
+        if (session.therapistId) {
+          const hourlyRate = session.therapistId.hourlyRate || (therapist.credentials === 'SLPA' ? 30 : 35);
+          const hoursWorked = (session.duration || 0) / 60; // Convert minutes to hours
+          const sessionEarnings = Math.round(hourlyRate * hoursWorked * 100); // Convert to cents
+          totalEarnings += sessionEarnings;
         }
       }
 
@@ -1106,23 +1137,43 @@ const verifyTherapistCompliance = asyncHandler(async (req, res) => {
   });
 
   // Check if all required documents are verified to auto-activate
-  // Australia-specific documents
+  // US-based documents (primary)
+  const ashaCertificationVerified = therapist.complianceDocuments?.ashaCertification?.verified || false;
+  const stateLicensureVerified = therapist.complianceDocuments?.stateLicensure?.verified || false;
+  const liabilityInsuranceVerified = therapist.complianceDocuments?.professionalLiabilityInsurance?.verified || false;
+  const backgroundCheckVerified = therapist.complianceDocuments?.backgroundCheck?.verified || false;
+  const supervisionVerified = therapist.complianceDocuments?.supervision?.verified || false;
+  
+  // Legacy Australia-specific documents
   const spaMembershipVerified = therapist.complianceDocuments?.spaMembership?.verified || false;
   const stateRegistrationVerified = therapist.complianceDocuments?.stateRegistration?.verified || false;
   const insuranceVerified = therapist.complianceDocuments?.professionalIndemnityInsurance?.verified || false;
   const wwccVerified = therapist.complianceDocuments?.workingWithChildrenCheck?.verified || false;
   const policeCheckVerified = therapist.complianceDocuments?.policeCheck?.verified || false;
   
-  // Legacy documents (for backward compatibility)
+  // Legacy US documents (for backward compatibility)
   const stateLicenseVerified = therapist.complianceDocuments?.stateLicense?.verified || false;
-  const liabilityInsuranceVerified = therapist.complianceDocuments?.liabilityInsurance?.verified || false;
+  const legacyLiabilityInsuranceVerified = therapist.complianceDocuments?.liabilityInsurance?.verified || false;
 
   // Auto-activate if all required documents are verified
-  // Check Australia-specific documents first, then fall back to legacy
-  const allAustraliaDocsVerified = spaMembershipVerified && stateRegistrationVerified && insuranceVerified && wwccVerified && policeCheckVerified;
-  const allLegacyDocsVerified = stateLicenseVerified && liabilityInsuranceVerified;
+  // Check US-based documents first (role-specific)
+  const isSLP = therapist.credentials === 'SLP';
+  const isSLPA = therapist.credentials === 'SLPA';
   
-  if ((allAustraliaDocsVerified || allLegacyDocsVerified) && therapist.status === 'pending') {
+  let allUSDocsVerified = false;
+  if (isSLP) {
+    // SLP requires: ASHA Certification, State Licensure, Professional Liability Insurance, Background Check
+    allUSDocsVerified = ashaCertificationVerified && stateLicensureVerified && liabilityInsuranceVerified && backgroundCheckVerified;
+  } else if (isSLPA) {
+    // SLPA requires: State Licensure, Professional Liability Insurance, Background Check, Supervision
+    allUSDocsVerified = stateLicensureVerified && liabilityInsuranceVerified && backgroundCheckVerified && supervisionVerified;
+  }
+  
+  // Legacy checks for backward compatibility
+  const allAustraliaDocsVerified = spaMembershipVerified && stateRegistrationVerified && insuranceVerified && wwccVerified && policeCheckVerified;
+  const allLegacyDocsVerified = stateLicenseVerified && legacyLiabilityInsuranceVerified;
+  
+  if ((allUSDocsVerified || allAustraliaDocsVerified || allLegacyDocsVerified) && therapist.status === 'pending') {
     therapist.status = 'active';
     therapist.isVerified = true;
   }
@@ -1546,10 +1597,49 @@ const getAdminActionLogs = asyncHandler(async (req, res) => {
   });
 });
 
+// @desc    Get platform stats
+// @route   GET /api/admin/platform-stats
+// @access  Private/Admin
+const getPlatformStats = asyncHandler(async (req, res) => {
+  const PlatformStats = require('../models/PlatformStats');
+  const stats = await PlatformStats.getStats();
+  
+  res.json({
+    success: true,
+    data: stats,
+  });
+});
+
+// @desc    Update platform stats
+// @route   PUT /api/admin/platform-stats
+// @access  Private/Admin
+const updatePlatformStats = asyncHandler(async (req, res) => {
+  const PlatformStats = require('../models/PlatformStats');
+  const updates = req.body;
+  
+  let stats = await PlatformStats.findOne();
+  if (!stats) {
+    stats = await PlatformStats.create(updates);
+  } else {
+    stats = await PlatformStats.findOneAndUpdate(
+      {},
+      { $set: updates },
+      { new: true, runValidators: true }
+    );
+  }
+  
+  res.json({
+    success: true,
+    message: 'Platform stats updated successfully',
+    data: stats,
+  });
+});
+
 module.exports = {
   getAllUsers,
   getAllTherapists,
   getAllClients,
+  getClientById,
   getAllPayments,
   getAllSessions,
   getReports,
@@ -1561,6 +1651,8 @@ module.exports = {
   getTherapistEarnings,
   getAllTherapistsEarnings,
   updateTherapistStatus,
+  getPlatformStats,
+  updatePlatformStats,
   updateTherapistSupervising,
   verifyTherapistCompliance,
   getTherapistActivity,

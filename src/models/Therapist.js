@@ -138,6 +138,47 @@ const therapistSchema = new mongoose.Schema({
   },
   // Compliance documents
   complianceDocuments: {
+    // ASHA Certification (SLP only) - US-based
+    ashaCertification: {
+      certificationNumber: String, // CCC-SLP number
+      expirationDate: Date,
+      documentUrl: String,
+      verified: { type: Boolean, default: false },
+      verifiedAt: Date,
+      verifiedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    },
+    // State Licensure (US-based) - Primary field
+    stateLicensure: {
+      licenseNumber: String,
+      state: String, // US state codes (AL, AK, AZ, etc.)
+      expirationDate: Date,
+      documentUrl: String,
+      verified: { type: Boolean, default: false },
+      verifiedAt: Date,
+      verifiedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    },
+    // Supervision (SLPA only) - US-based
+    supervision: {
+      supervisingSLPName: String,
+      supervisingSLPLicenseNumber: String,
+      supervisingState: String,
+      agreementDocumentUrl: String, // Supervision agreement if required by state
+      verified: { type: Boolean, default: false },
+      verifiedAt: Date,
+      verifiedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    },
+    // Professional Liability Insurance (US-based) - Primary field
+    professionalLiabilityInsurance: {
+      provider: String,
+      policyNumber: String,
+      coverageAmount: String,
+      expirationDate: Date,
+      documentUrl: String,
+      verified: { type: Boolean, default: false },
+      verifiedAt: Date,
+      verifiedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    },
+    // Legacy fields for backward compatibility
     // Australia-specific: Speech Pathology Australia (SPA) membership
     spaMembership: {
       membershipNumber: String,
@@ -158,7 +199,7 @@ const therapistSchema = new mongoose.Schema({
       verifiedAt: Date,
       verifiedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     },
-    // Professional indemnity insurance
+    // Professional indemnity insurance (legacy)
     professionalIndemnityInsurance: {
       provider: String,
       policyNumber: String,
@@ -169,7 +210,18 @@ const therapistSchema = new mongoose.Schema({
       verifiedAt: Date,
       verifiedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     },
-    // Working with Children Check (WWCC)
+    // Background Check / Child Safety Clearance (US-based)
+    backgroundCheck: {
+      clearanceNumber: String,
+      state: String,
+      expirationDate: Date,
+      documentUrl: String,
+      verified: { type: Boolean, default: false },
+      verifiedAt: Date,
+      verifiedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    },
+    // Legacy fields for backward compatibility
+    // Working with Children Check (WWCC) - Australia
     workingWithChildrenCheck: {
       checkNumber: String,
       state: String,
@@ -179,7 +231,7 @@ const therapistSchema = new mongoose.Schema({
       verifiedAt: Date,
       verifiedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     },
-    // Police check / National Police Check
+    // Police check / National Police Check - Australia
     policeCheck: {
       checkNumber: String,
       issueDate: Date,

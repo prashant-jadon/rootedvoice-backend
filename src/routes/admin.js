@@ -6,6 +6,7 @@ const {
   getAllUsers,
   getAllTherapists,
   getAllClients,
+  getClientById,
   getAllPayments,
   getAllSessions,
   getReports,
@@ -25,6 +26,8 @@ const {
   activateUser,
   bulkUserAction,
   getAdminActionLogs,
+  getPlatformStats,
+  updatePlatformStats,
 } = require('../controllers/adminController');
 const {
   getPricingTiers,
@@ -64,6 +67,7 @@ router.get('/therapists/incomplete', getIncompleteTherapistProfiles);
 
 // Client management
 router.get('/clients', getAllClients);
+router.get('/clients/:id', getClientById);
 
 // Payment management
 router.get('/payments', getAllPayments);
@@ -87,6 +91,10 @@ router.delete('/pricing/:tier', deletePricingTier);
 // Payment split configuration
 router.get('/payment-split', getPaymentSplit);
 router.put('/payment-split', updatePaymentSplit);
+
+// Platform stats
+router.get('/platform-stats', getPlatformStats);
+router.put('/platform-stats', updatePlatformStats);
 
 // Rate caps configuration
 router.get('/rate-caps', getRateCaps);

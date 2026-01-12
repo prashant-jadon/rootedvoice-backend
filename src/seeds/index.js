@@ -339,6 +339,9 @@ const seedDatabase = async () => {
 
     console.log('🎯 Creating goals...');
 
+    // NOTE: Goals in seed data are for DEVELOPMENT/TESTING ONLY
+    // In production, goals must NEVER be auto-generated
+    // Goals must be created by therapists AFTER diagnostic evaluation
     // Create goals
     const goalData = [
       {

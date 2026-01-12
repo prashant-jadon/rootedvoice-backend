@@ -38,7 +38,7 @@ const goalSchema = new mongoose.Schema({
   },
   progress: {
     type: Number,
-    default: 0,
+    default: 0, // Goals start at 0% - progress is updated by therapist based on clinical assessment
     min: 0,
     max: 100,
   },

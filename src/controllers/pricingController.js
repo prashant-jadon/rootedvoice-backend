@@ -82,16 +82,19 @@ let PRICING_TIERS = {
   }
 };
 
-// Payment split configuration (platform fee %) - differentiated by credential type
-// Therapist gets 55%, Rooted Voices (Platform) gets 45%
+// NOTE: Payment split configuration is DEPRECATED
+// Therapists are now paid a fixed hourly rate based on their tier
+// Platform revenue is handled separately and not shown as a "split" to clinicians
+// This configuration is kept for backward compatibility with payment processing only
+// DO NOT use this for calculating or displaying therapist earnings
 let PAYMENT_SPLIT = {
   SLP: {
-    platformFeePercent: 45, // Rooted Voices gets 45%
-    therapistFeePercent: 55, // Therapist gets 55%
+    platformFeePercent: 45, // Internal use only - not displayed to therapists
+    therapistFeePercent: 55, // Internal use only - not displayed to therapists
   },
   SLPA: {
-    platformFeePercent: 45, // Rooted Voices gets 45%
-    therapistFeePercent: 55, // Therapist gets 55%
+    platformFeePercent: 60, // Internal use only - not displayed to therapists
+    therapistFeePercent: 40, // Internal use only - not displayed to therapists
   },
 };
 

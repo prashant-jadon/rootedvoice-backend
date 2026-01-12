@@ -573,6 +573,10 @@ const completeSession = asyncHandler(async (req, res) => {
     $inc: { totalSessions: 1 }
   });
 
+  // NOTE: Goals and progress are NEVER auto-generated after session completion
+  // Goals must be created by therapist AFTER diagnostic evaluation
+  // Progress is updated manually by therapist based on clinical assessment
+
   // Auto-generate SOAP note using AI (async, don't block response)
   const generateSoapNoteAsync = async () => {
     try {

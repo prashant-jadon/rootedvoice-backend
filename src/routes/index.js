@@ -8,6 +8,7 @@ const clientRoutes = require('./clients');
 const sessionRoutes = require('./sessions');
 const subscriptionRoutes = require('./subscriptions');
 const adminRoutes = require('./admin');
+const { getPlatformStats } = require('../controllers/publicController');
 const stripeRoutes = require('./stripe');
 const assignmentRoutes = require('./assignments');
 const forumRoutes = require('./forum');
@@ -34,6 +35,9 @@ router.use('/translation', translationRoutes);
 router.use('/calendar', calendarRoutes);
 router.use('/family-coaching', familyCoachingRoutes);
 router.use('/push', pushRoutes);
+
+// Public routes
+router.get('/public/platform-stats', getPlatformStats);
 
 // Health check
 router.get('/health', (req, res) => {

@@ -134,6 +134,12 @@ const uploadDocuments = asyncHandler(async (req, res) => {
 
   const uploadedFiles = {};
   const documentTypes = [
+    'ashaCertification',
+    'stateLicensure',
+    'supervisionAgreement',
+    'professionalLiabilityInsurance',
+    'backgroundCheck',
+    // Legacy document types
     'spaMembership',
     'stateRegistration',
     'professionalIndemnityInsurance',
@@ -151,7 +157,58 @@ const uploadDocuments = asyncHandler(async (req, res) => {
     }
   }
 
-  // Update therapist with document URLs
+  // Update therapist with document URLs - US-based fields (primary)
+  if (uploadedFiles.ashaCertification && req.body.ashaCertificationNumber) {
+    therapist.complianceDocuments.ashaCertification = {
+      ...therapist.complianceDocuments.ashaCertification,
+      certificationNumber: req.body.ashaCertificationNumber,
+      expirationDate: req.body.ashaCertificationExpirationDate,
+      documentUrl: uploadedFiles.ashaCertification,
+    };
+  }
+
+  if (uploadedFiles.stateLicensure && req.body.licenseNumber) {
+    therapist.complianceDocuments.stateLicensure = {
+      ...therapist.complianceDocuments.stateLicensure,
+      licenseNumber: req.body.licenseNumber,
+      state: req.body.licensingState,
+      expirationDate: req.body.licenseExpirationDate,
+      documentUrl: uploadedFiles.stateLicensure,
+    };
+  }
+
+  if (uploadedFiles.supervisionAgreement && req.body.supervisingSLPName) {
+    therapist.complianceDocuments.supervision = {
+      ...therapist.complianceDocuments.supervision,
+      supervisingSLPName: req.body.supervisingSLPName,
+      supervisingSLPLicenseNumber: req.body.supervisingSLPLicenseNumber,
+      supervisingState: req.body.supervisingState,
+      agreementDocumentUrl: uploadedFiles.supervisionAgreement,
+    };
+  }
+
+  if (uploadedFiles.professionalLiabilityInsurance && req.body.insuranceProvider) {
+    therapist.complianceDocuments.professionalLiabilityInsurance = {
+      ...therapist.complianceDocuments.professionalLiabilityInsurance,
+      provider: req.body.insuranceProvider,
+      policyNumber: req.body.insurancePolicyNumber,
+      coverageAmount: req.body.insuranceCoverageAmount,
+      expirationDate: req.body.insuranceExpirationDate,
+      documentUrl: uploadedFiles.professionalLiabilityInsurance,
+    };
+  }
+
+  if (uploadedFiles.backgroundCheck && req.body.clearanceNumber) {
+    therapist.complianceDocuments.backgroundCheck = {
+      ...therapist.complianceDocuments.backgroundCheck,
+      clearanceNumber: req.body.clearanceNumber,
+      state: req.body.clearanceState,
+      expirationDate: req.body.clearanceExpirationDate,
+      documentUrl: uploadedFiles.backgroundCheck,
+    };
+  }
+
+  // Legacy document handling for backward compatibility
   if (uploadedFiles.spaMembership && req.body.spaMembershipNumber) {
     therapist.complianceDocuments.spaMembership = {
       ...therapist.complianceDocuments.spaMembership,

@@ -74,6 +74,38 @@ const register = asyncHandler(async (req, res) => {
       practiceLocation: additionalData.practiceLocation || {},
       // Initialize compliance documents structure
       complianceDocuments: {
+        // US-based fields (primary)
+        ashaCertification: additionalData.ashaCertification ? {
+          certificationNumber: additionalData.ashaCertification.certificationNumber,
+          expirationDate: additionalData.ashaCertification.expirationDate,
+          documentUrl: additionalData.ashaCertification.documentUrl,
+        } : {},
+        stateLicensure: additionalData.stateLicensure ? {
+          licenseNumber: additionalData.stateLicensure.licenseNumber,
+          state: additionalData.stateLicensure.state,
+          expirationDate: additionalData.stateLicensure.expirationDate,
+          documentUrl: additionalData.stateLicensure.documentUrl,
+        } : {},
+        supervision: additionalData.supervision ? {
+          supervisingSLPName: additionalData.supervision.supervisingSLPName,
+          supervisingSLPLicenseNumber: additionalData.supervision.supervisingSLPLicenseNumber,
+          supervisingState: additionalData.supervision.supervisingState,
+          agreementDocumentUrl: additionalData.supervision.agreementDocumentUrl,
+        } : {},
+        professionalLiabilityInsurance: additionalData.professionalLiabilityInsurance ? {
+          provider: additionalData.professionalLiabilityInsurance.provider,
+          policyNumber: additionalData.professionalLiabilityInsurance.policyNumber,
+          coverageAmount: additionalData.professionalLiabilityInsurance.coverageAmount,
+          expirationDate: additionalData.professionalLiabilityInsurance.expirationDate,
+          documentUrl: additionalData.professionalLiabilityInsurance.documentUrl,
+        } : {},
+        backgroundCheck: additionalData.backgroundCheck ? {
+          clearanceNumber: additionalData.backgroundCheck.clearanceNumber,
+          state: additionalData.backgroundCheck.state,
+          expirationDate: additionalData.backgroundCheck.expirationDate,
+          documentUrl: additionalData.backgroundCheck.documentUrl,
+        } : {},
+        // Legacy fields for backward compatibility
         spaMembership: additionalData.spaMembership ? {
           membershipNumber: additionalData.spaMembership.membershipNumber,
           membershipType: additionalData.spaMembership.membershipType,
@@ -114,6 +146,9 @@ const register = asyncHandler(async (req, res) => {
     therapist.isVerified = false
     await therapist.save()
   } else if (role === 'client') {
+    // Create client profile - NO goals or progress should be auto-generated
+    // Goals must be created by therapist AFTER diagnostic evaluation
+    // Progress tracking begins only after goals are established
     await Client.create({
       userId: user._id,
       dateOfBirth: additionalData.dateOfBirth || new Date('2000-01-01'),

@@ -150,6 +150,66 @@ const clientSchema = new mongoose.Schema({
     type: String,
     enum: ['en', 'es', 'fr', 'de', 'zh', 'ja', 'ko', 'ar', 'pt', 'ru', 'it', 'hi', 'nl', 'pl', 'tr', 'vi', 'asl'],
   }],
+  // Clinical Intake Information
+  intake: {
+    // Client type: 'child' or 'adult'
+    clientType: {
+      type: String,
+      enum: ['child', 'adult'],
+    },
+    // Primary concerns / reason for seeking services
+    primaryConcerns: {
+      type: String,
+      maxlength: 2000,
+    },
+    // Communication concerns (detailed)
+    communicationConcerns: {
+      type: String,
+      maxlength: 2000,
+    },
+    // State of residence
+    stateOfResidence: {
+      type: String,
+      trim: true,
+    },
+    // Telehealth consent and acknowledgements
+    telehealthConsent: {
+      consented: {
+        type: Boolean,
+        default: false,
+      },
+      consentDate: Date,
+      understandsTechnology: {
+        type: Boolean,
+        default: false,
+      },
+      understandsPrivacy: {
+        type: Boolean,
+        default: false,
+      },
+      understandsLimitations: {
+        type: Boolean,
+        default: false,
+      },
+      emergencyContactProvided: {
+        type: Boolean,
+        default: false,
+      },
+      consentSignature: String, // Name of person providing consent
+      relationshipToClient: String, // Self, Parent, Guardian, etc.
+    },
+    // Intake completion status
+    intakeCompleted: {
+      type: Boolean,
+      default: false,
+    },
+    completedAt: Date,
+    // Additional intake notes
+    additionalNotes: {
+      type: String,
+      maxlength: 2000,
+    },
+  },
 }, {
   timestamps: true,
 });
