@@ -13,7 +13,7 @@ const { logAdminAction, getClientIp, getUserAgent } = require('../utils/adminLog
 // @access  Private/Admin
 const getAllUsers = asyncHandler(async (req, res) => {
   const { role, search, page = 1, limit = 50 } = req.query;
-  
+
   const query = {};
   if (role) query.role = role;
   if (search) {
@@ -25,7 +25,7 @@ const getAllUsers = asyncHandler(async (req, res) => {
   }
 
   const skip = (parseInt(page) - 1) * parseInt(limit);
-  
+
   const users = await User.find(query)
     .select('-password')
     .sort({ createdAt: -1 })
@@ -51,7 +51,7 @@ const getAllUsers = asyncHandler(async (req, res) => {
 // @access  Private/Admin
 const getAllTherapists = asyncHandler(async (req, res) => {
   const { search, page = 1, limit = 50 } = req.query;
-  
+
   const query = {};
   if (search) {
     query.$or = [
@@ -63,7 +63,7 @@ const getAllTherapists = asyncHandler(async (req, res) => {
   }
 
   const skip = (parseInt(page) - 1) * parseInt(limit);
-  
+
   const therapists = await Therapist.find(query)
     .populate('userId', 'email firstName lastName phone avatar')
     .sort({ createdAt: -1 })
@@ -89,7 +89,7 @@ const getAllTherapists = asyncHandler(async (req, res) => {
 // @access  Private/Admin
 const getAllClients = asyncHandler(async (req, res) => {
   const { search, page = 1, limit = 50 } = req.query;
-  
+
   const query = {};
   if (search) {
     query.$or = [
@@ -100,7 +100,7 @@ const getAllClients = asyncHandler(async (req, res) => {
   }
 
   const skip = (parseInt(page) - 1) * parseInt(limit);
-  
+
   const clients = await Client.find(query)
     .populate('userId', 'email firstName lastName phone avatar')
     .populate({
@@ -162,7 +162,7 @@ const getClientById = asyncHandler(async (req, res) => {
 // @access  Private/Admin
 const getAllPayments = asyncHandler(async (req, res) => {
   const { status, startDate, endDate, page = 1, limit = 50 } = req.query;
-  
+
   const query = {};
   if (status) query.status = status;
   if (startDate || endDate) {
@@ -172,7 +172,7 @@ const getAllPayments = asyncHandler(async (req, res) => {
   }
 
   const skip = (parseInt(page) - 1) * parseInt(limit);
-  
+
   const payments = await Payment.find(query)
     .populate('clientId', 'userId')
     .populate('therapistId', 'userId')
@@ -272,7 +272,7 @@ const getDashboardStats = asyncHandler(async (req, res) => {
 // @access  Private/Admin
 const getAllSessions = asyncHandler(async (req, res) => {
   const { status, startDate, endDate, therapistId, clientId, page = 1, limit = 50 } = req.query;
-  
+
   const query = {};
   if (status) query.status = status;
   if (therapistId) query.therapistId = therapistId;
@@ -284,7 +284,7 @@ const getAllSessions = asyncHandler(async (req, res) => {
   }
 
   const skip = (parseInt(page) - 1) * parseInt(limit);
-  
+
   const sessions = await Session.find(query)
     .populate('therapistId', 'userId')
     .populate('clientId', 'userId')
@@ -311,10 +311,10 @@ const getAllSessions = asyncHandler(async (req, res) => {
 // @access  Private/Admin
 const getReports = asyncHandler(async (req, res) => {
   const { range = 'month' } = req.query;
-  
+
   let startDate, endDate;
   const now = new Date();
-  
+
   switch (range) {
     case 'week':
       startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
@@ -479,7 +479,7 @@ const updateTherapistCredentials = asyncHandler(async (req, res) => {
   }
 
   const therapist = await Therapist.findById(id);
-  
+
   if (!therapist) {
     return res.status(404).json({
       success: false,
@@ -502,7 +502,7 @@ const updateTherapistCredentials = asyncHandler(async (req, res) => {
   await therapist.save();
 
   // Log the action
-  const therapistName = therapist.userId 
+  const therapistName = therapist.userId
     ? `${therapist.userId.firstName} ${therapist.userId.lastName}`
     : 'Unknown';
 
@@ -653,7 +653,7 @@ const getTherapistEarnings = asyncHandler(async (req, res) => {
       const hoursWorked = (session.duration || 0) / 60; // Convert minutes to hours
       const sessionEarnings = Math.round(hourlyRate * hoursWorked * 100); // Convert to cents
       totalEarnings += sessionEarnings;
-      
+
       // Total revenue is the session price paid by client
       const payment = payments.find(p => p.sessionId.toString() === session._id.toString());
       if (payment) {
@@ -673,7 +673,7 @@ const getTherapistEarnings = asyncHandler(async (req, res) => {
       const hoursWorked = (session.duration || 0) / 60;
       const hourlyRate = session.therapistId.hourlyRate || (credentialType === 'SLPA' ? 30 : 35);
       const sessionEarnings = Math.round(hourlyRate * hoursWorked * 100); // Convert to cents
-      
+
       earningsByCredential[credentialType].hours += hoursWorked;
       earningsByCredential[credentialType].earnings += sessionEarnings;
       earningsByCredential[credentialType].sessions += 1;
@@ -904,10 +904,10 @@ const updateTherapistStatus = asyncHandler(async (req, res) => {
   await therapist.save();
 
   // Log the action
-  const therapistName = therapist.userId 
+  const therapistName = therapist.userId
     ? `${therapist.userId.firstName} ${therapist.userId.lastName}`
     : 'Unknown';
-  
+
   let actionType = 'therapist_status_changed';
   if (status === 'active' && oldStatus === 'pending') {
     actionType = 'therapist_approved';
@@ -974,7 +974,7 @@ const updateTherapistSupervising = asyncHandler(async (req, res) => {
   await therapist.save();
 
   // Log the action
-  const therapistName = therapist.userId 
+  const therapistName = therapist.userId
     ? `${therapist.userId.firstName} ${therapist.userId.lastName}`
     : 'Unknown';
 
@@ -1082,6 +1082,31 @@ const verifyTherapistCompliance = asyncHandler(async (req, res) => {
       ...therapist.complianceDocuments.liabilityInsurance,
       ...verificationData,
     };
+  } else if (documentType === 'stateLicensures') {
+    const { credentialId } = req.body;
+    if (!credentialId) {
+      return res.status(400).json({
+        success: false,
+        message: 'credentialId is required for stateLicensures',
+      });
+    }
+
+    // Initialize array if it doesn't exist
+    if (!therapist.complianceDocuments.stateLicensures) {
+      therapist.complianceDocuments.stateLicensures = [];
+    }
+
+    const license = therapist.complianceDocuments.stateLicensures.id(credentialId);
+    if (license) {
+      license.verified = verified === true;
+      license.verifiedAt = verified === true ? new Date() : null;
+      license.verifiedBy = verified === true ? req.user._id : null;
+    } else {
+      return res.status(404).json({
+        success: false,
+        message: 'License not found',
+      });
+    }
   } else if (documentType === 'additionalCredentials') {
     // This would require credentialId in body to identify which credential
     const { credentialId } = req.body;
@@ -1114,7 +1139,7 @@ const verifyTherapistCompliance = asyncHandler(async (req, res) => {
   }
 
   // Log the document verification action
-  const therapistName = therapist.userId 
+  const therapistName = therapist.userId
     ? `${therapist.userId.firstName} ${therapist.userId.lastName}`
     : 'Unknown';
 
@@ -1139,18 +1164,23 @@ const verifyTherapistCompliance = asyncHandler(async (req, res) => {
   // Check if all required documents are verified to auto-activate
   // US-based documents (primary)
   const ashaCertificationVerified = therapist.complianceDocuments?.ashaCertification?.verified || false;
-  const stateLicensureVerified = therapist.complianceDocuments?.stateLicensure?.verified || false;
+
+  // Check if at least one state license is verified (from array or legacy single)
+  const stateLicensures = therapist.complianceDocuments?.stateLicensures || [];
+  const hasVerifiedStateLicense = stateLicensures.some(l => l.verified) ||
+    (therapist.complianceDocuments?.stateLicensure?.verified || false);
+
   const liabilityInsuranceVerified = therapist.complianceDocuments?.professionalLiabilityInsurance?.verified || false;
   const backgroundCheckVerified = therapist.complianceDocuments?.backgroundCheck?.verified || false;
   const supervisionVerified = therapist.complianceDocuments?.supervision?.verified || false;
-  
+
   // Legacy Australia-specific documents
   const spaMembershipVerified = therapist.complianceDocuments?.spaMembership?.verified || false;
   const stateRegistrationVerified = therapist.complianceDocuments?.stateRegistration?.verified || false;
   const insuranceVerified = therapist.complianceDocuments?.professionalIndemnityInsurance?.verified || false;
   const wwccVerified = therapist.complianceDocuments?.workingWithChildrenCheck?.verified || false;
   const policeCheckVerified = therapist.complianceDocuments?.policeCheck?.verified || false;
-  
+
   // Legacy US documents (for backward compatibility)
   const stateLicenseVerified = therapist.complianceDocuments?.stateLicense?.verified || false;
   const legacyLiabilityInsuranceVerified = therapist.complianceDocuments?.liabilityInsurance?.verified || false;
@@ -1159,20 +1189,20 @@ const verifyTherapistCompliance = asyncHandler(async (req, res) => {
   // Check US-based documents first (role-specific)
   const isSLP = therapist.credentials === 'SLP';
   const isSLPA = therapist.credentials === 'SLPA';
-  
+
   let allUSDocsVerified = false;
   if (isSLP) {
     // SLP requires: ASHA Certification, State Licensure, Professional Liability Insurance, Background Check
-    allUSDocsVerified = ashaCertificationVerified && stateLicensureVerified && liabilityInsuranceVerified && backgroundCheckVerified;
+    allUSDocsVerified = ashaCertificationVerified && hasVerifiedStateLicense && liabilityInsuranceVerified && backgroundCheckVerified;
   } else if (isSLPA) {
     // SLPA requires: State Licensure, Professional Liability Insurance, Background Check, Supervision
-    allUSDocsVerified = stateLicensureVerified && liabilityInsuranceVerified && backgroundCheckVerified && supervisionVerified;
+    allUSDocsVerified = hasVerifiedStateLicense && liabilityInsuranceVerified && backgroundCheckVerified && supervisionVerified;
   }
-  
+
   // Legacy checks for backward compatibility
   const allAustraliaDocsVerified = spaMembershipVerified && stateRegistrationVerified && insuranceVerified && wwccVerified && policeCheckVerified;
   const allLegacyDocsVerified = stateLicenseVerified && legacyLiabilityInsuranceVerified;
-  
+
   if ((allUSDocsVerified || allAustraliaDocsVerified || allLegacyDocsVerified) && therapist.status === 'pending') {
     therapist.status = 'active';
     therapist.isVerified = true;
@@ -1311,7 +1341,7 @@ const getIncompleteTherapistProfiles = asyncHandler(async (req, res) => {
 
   const incompleteProfiles = therapists.map(therapist => {
     const missingItems = [];
-    
+
     // Check Australia-specific documents
     if (!therapist.complianceDocuments?.spaMembership?.membershipNumber) {
       missingItems.push('SPA Membership Number');
@@ -1343,7 +1373,7 @@ const getIncompleteTherapistProfiles = asyncHandler(async (req, res) => {
     if (!therapist.complianceDocuments?.policeCheck?.verified) {
       missingItems.push('Police Check Verification');
     }
-    
+
     // Legacy documents (for backward compatibility - only check if Australia docs don't exist)
     if (!therapist.complianceDocuments?.spaMembership?.membershipNumber) {
       if (!therapist.complianceDocuments?.stateLicense?.number) {
@@ -1416,7 +1446,7 @@ const suspendUser = asyncHandler(async (req, res) => {
 
   // Log the action
   const userName = `${user.firstName} ${user.lastName} (${user.email})`;
-  
+
   await logAdminAction({
     adminId: req.user._id,
     action: 'user_suspended',
@@ -1462,7 +1492,7 @@ const activateUser = asyncHandler(async (req, res) => {
 
   // Log the action
   const userName = `${user.firstName} ${user.lastName} (${user.email})`;
-  
+
   await logAdminAction({
     adminId: req.user._id,
     action: 'user_activated',
@@ -1507,7 +1537,7 @@ const bulkUserAction = asyncHandler(async (req, res) => {
 
   const isActive = action === 'activate';
   const users = await User.find({ _id: { $in: userIds } });
-  
+
   const updatePromises = users.map(user => {
     user.isActive = isActive;
     return user.save();
@@ -1517,7 +1547,7 @@ const bulkUserAction = asyncHandler(async (req, res) => {
 
   // Log the bulk action
   const userNames = users.map(u => `${u.firstName} ${u.lastName} (${u.email})`).join(', ');
-  
+
   await logAdminAction({
     adminId: req.user._id,
     action: 'user_bulk_action',
@@ -1551,24 +1581,24 @@ const bulkUserAction = asyncHandler(async (req, res) => {
 // @route   GET /api/admin/action-logs
 // @access  Private/Admin
 const getAdminActionLogs = asyncHandler(async (req, res) => {
-  const { 
-    adminId, 
-    action, 
-    targetType, 
-    targetId, 
-    startDate, 
-    endDate, 
-    page = 1, 
-    limit = 50 
+  const {
+    adminId,
+    action,
+    targetType,
+    targetId,
+    startDate,
+    endDate,
+    page = 1,
+    limit = 50
   } = req.query;
 
   const query = {};
-  
+
   if (adminId) query.adminId = adminId;
   if (action) query.action = action;
   if (targetType) query.targetType = targetType;
   if (targetId) query.targetId = targetId;
-  
+
   if (startDate || endDate) {
     query.createdAt = {};
     if (startDate) query.createdAt.$gte = new Date(startDate);
@@ -1603,7 +1633,7 @@ const getAdminActionLogs = asyncHandler(async (req, res) => {
 const getPlatformStats = asyncHandler(async (req, res) => {
   const PlatformStats = require('../models/PlatformStats');
   const stats = await PlatformStats.getStats();
-  
+
   res.json({
     success: true,
     data: stats,
@@ -1616,7 +1646,7 @@ const getPlatformStats = asyncHandler(async (req, res) => {
 const updatePlatformStats = asyncHandler(async (req, res) => {
   const PlatformStats = require('../models/PlatformStats');
   const updates = req.body;
-  
+
   let stats = await PlatformStats.findOne();
   if (!stats) {
     stats = await PlatformStats.create(updates);
@@ -1627,7 +1657,7 @@ const updatePlatformStats = asyncHandler(async (req, res) => {
       { new: true, runValidators: true }
     );
   }
-  
+
   res.json({
     success: true,
     message: 'Platform stats updated successfully',

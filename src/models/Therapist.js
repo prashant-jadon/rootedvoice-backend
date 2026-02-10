@@ -80,7 +80,7 @@ const therapistSchema = new mongoose.Schema({
     required: [true, 'Hourly rate is required'],
     min: [0, 'Hourly rate must be positive'],
     validate: {
-      validator: function(value) {
+      validator: function (value) {
         // Rate cap validation will be handled in controller
         // This allows flexibility for admin to set caps
         return value >= 0;
@@ -147,7 +147,16 @@ const therapistSchema = new mongoose.Schema({
       verifiedAt: Date,
       verifiedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     },
-    // State Licensure (US-based) - Primary field
+    // State Licensure (US-based) - Primary field - SUPPORTING MULTIPLE
+    stateLicensures: [{
+      licenseNumber: String,
+      state: String, // US state codes (AL, AK, AZ, etc.)
+      expirationDate: Date,
+      documentUrl: String,
+      verified: { type: Boolean, default: false },
+      verifiedAt: Date,
+      verifiedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    }],
     stateLicensure: {
       licenseNumber: String,
       state: String, // US state codes (AL, AK, AZ, etc.)
@@ -299,6 +308,19 @@ const therapistSchema = new mongoose.Schema({
     type: Boolean,
     default: false,
   },
+  // Banking details for payouts (US-based)
+  bankDetails: {
+    accountName: String,
+    bankName: String,
+    routingNumber: {
+      type: String,
+      trim: true,
+    },
+    accountNumber: {
+      type: String,
+      trim: true,
+    },
+  },
 }, {
   timestamps: true,
 });
@@ -313,7 +335,7 @@ therapistSchema.index({ status: 1 });
 therapistSchema.index({ credentials: 1 });
 
 // Virtual for active client count
-therapistSchema.virtual('activeClientCount').get(function() {
+therapistSchema.virtual('activeClientCount').get(function () {
   return this.activeClients.length;
 });
 

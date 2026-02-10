@@ -26,25 +26,25 @@ const getTherapists = asyncHandler(async (req, res) => {
 
   // Build filter
   const filter = {};
-  
+
   if (state) {
     filter.licensedStates = state;
   }
-  
+
   if (specialization) {
     filter.specializations = specialization;
   }
-  
+
   if (minRate || maxRate) {
     filter.hourlyRate = {};
     if (minRate) filter.hourlyRate.$gte = parseFloat(minRate);
     if (maxRate) filter.hourlyRate.$lte = parseFloat(maxRate);
   }
-  
+
   if (minRating) {
     filter.rating = { $gte: parseFloat(minRating) };
   }
-  
+
   if (isVerified !== undefined) {
     filter.isVerified = isVerified === 'true';
   }
@@ -147,6 +147,7 @@ const uploadDocuments = asyncHandler(async (req, res) => {
     'policeCheck',
     'academicQualification',
     'additionalCredential',
+    'stateLicensures', // Allow uploading array of files
   ];
 
   // Process uploaded files
@@ -175,6 +176,36 @@ const uploadDocuments = asyncHandler(async (req, res) => {
       expirationDate: req.body.licenseExpirationDate,
       documentUrl: uploadedFiles.stateLicensure,
     };
+  }
+
+  // Handle multiple state licensures
+  // Expecting req.files['stateLicensures'] to be an array of files
+  // And req.body.stateLicensures to be a JSON string or array of objects 
+  // Note: Multipart forms often send arrays as key[index][field] or just duplicate keys.
+  // Here we assume a specific structure or we parse it. 
+  // For simplicity given the current setup, we'll check for specific file keys or handle the array if passed.
+
+  if (req.files && req.files['stateLicensures'] && req.body.stateLicensuresData) {
+    const licenseFiles = Array.isArray(req.files['stateLicensures']) ? req.files['stateLicensures'] : [req.files['stateLicensures']];
+    let licensesData = [];
+    try {
+      licensesData = JSON.parse(req.body.stateLicensuresData);
+    } catch (e) {
+      console.error('Error parsing stateLicensuresData', e);
+    }
+
+    if (Array.isArray(licensesData)) {
+      therapist.complianceDocuments.stateLicensures = licensesData.map((lic, index) => ({
+        licenseNumber: lic.licenseNumber,
+        state: lic.state,
+        expirationDate: lic.expirationDate,
+        documentUrl: licenseFiles[index] ? licenseFiles[index].path : (lic.documentUrl || ''),
+        verified: false
+      }));
+
+      // Update licensedStates derived field
+      therapist.licensedStates = [...new Set(licensesData.map(l => l.state))];
+    }
   }
 
   if (uploadedFiles.supervisionAgreement && req.body.supervisingSLPName) {
@@ -395,20 +426,20 @@ const getTherapistStats = asyncHandler(async (req, res) => {
 
   // Get session stats
   const totalSessions = await Session.countDocuments({ therapistId: therapist._id });
-  const completedSessions = await Session.countDocuments({ 
-    therapistId: therapist._id, 
-    status: 'completed' 
+  const completedSessions = await Session.countDocuments({
+    therapistId: therapist._id,
+    status: 'completed'
   });
-  const upcomingSessions = await Session.countDocuments({ 
-    therapistId: therapist._id, 
+  const upcomingSessions = await Session.countDocuments({
+    therapistId: therapist._id,
     status: { $in: ['scheduled', 'confirmed'] },
     scheduledDate: { $gte: new Date() }
   });
 
   // Calculate revenue
   const revenueData = await Session.aggregate([
-    { 
-      $match: { 
+    {
+      $match: {
         therapistId: therapist._id,
         paymentStatus: 'completed'
       }
@@ -462,7 +493,7 @@ const getMyProfile = asyncHandler(async (req, res) => {
 // @access  Private (Therapist)
 const getMyPayments = asyncHandler(async (req, res) => {
   const therapist = await Therapist.findOne({ userId: req.user._id });
-  
+
   if (!therapist) {
     return res.status(404).json({
       success: false,
@@ -472,7 +503,7 @@ const getMyPayments = asyncHandler(async (req, res) => {
 
   const Payment = require('../models/Payment');
   const { status, startDate, endDate, page = 1, limit = 50 } = req.query;
-  
+
   const query = { therapistId: therapist._id };
   if (status) query.status = status;
   if (startDate || endDate) {
@@ -482,7 +513,7 @@ const getMyPayments = asyncHandler(async (req, res) => {
   }
 
   const skip = (parseInt(page) - 1) * parseInt(limit);
-  
+
   const payments = await Payment.find(query)
     .populate({
       path: 'clientId',
@@ -513,12 +544,12 @@ const getMyPayments = asyncHandler(async (req, res) => {
 
   // This month revenue
   const thisMonthData = await Payment.aggregate([
-    { 
-      $match: { 
-        therapistId: therapist._id, 
+    {
+      $match: {
+        therapistId: therapist._id,
         status: 'completed',
         createdAt: { $gte: startOfMonth }
-      } 
+      }
     },
     { $group: { _id: null, total: { $sum: '$amount' } } },
   ]);
@@ -526,12 +557,12 @@ const getMyPayments = asyncHandler(async (req, res) => {
 
   // Last month revenue for comparison
   const lastMonthData = await Payment.aggregate([
-    { 
-      $match: { 
-        therapistId: therapist._id, 
+    {
+      $match: {
+        therapistId: therapist._id,
         status: 'completed',
         createdAt: { $gte: startOfLastMonth, $lte: endOfLastMonth }
-      } 
+      }
     },
     { $group: { _id: null, total: { $sum: '$amount' } } },
   ]);
@@ -539,11 +570,11 @@ const getMyPayments = asyncHandler(async (req, res) => {
 
   // Pending payments
   const pendingData = await Payment.aggregate([
-    { 
-      $match: { 
-        therapistId: therapist._id, 
+    {
+      $match: {
+        therapistId: therapist._id,
         status: { $in: ['pending', 'processing'] }
-      } 
+      }
     },
     { $group: { _id: null, total: { $sum: '$amount' } } },
   ]);
@@ -557,7 +588,7 @@ const getMyPayments = asyncHandler(async (req, res) => {
   });
 
   // Calculate month-over-month change
-  const monthChange = lastMonthRevenue > 0 
+  const monthChange = lastMonthRevenue > 0
     ? ((thisMonthRevenue - lastMonthRevenue) / lastMonthRevenue * 100).toFixed(1)
     : thisMonthRevenue > 0 ? '100.0' : '0.0';
 

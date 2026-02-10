@@ -53,7 +53,7 @@ const register = asyncHandler(async (req, res) => {
     const rateCaps = getRateCapsForUse();
     const maxRate = rateCaps[additionalData.credentials] || rateCaps.SLP;
     const hourlyRate = additionalData.hourlyRate || (additionalData.credentials === 'SLP' ? 75 : 55);
-    
+
     if (hourlyRate > maxRate) {
       return res.status(400).json({
         success: false,
@@ -65,13 +65,22 @@ const register = asyncHandler(async (req, res) => {
     const therapist = await Therapist.create({
       userId: user._id,
       licenseNumber: additionalData.licenseNumber || additionalData.spaMembershipNumber || 'TEMP-' + Date.now(),
-      licensedStates: additionalData.licensedStates || [],
+      licensedStates: additionalData.stateLicensures
+        ? [...new Set(additionalData.stateLicensures.map(l => l.state))]
+        : (additionalData.licensedStates || []),
       specializations: additionalData.specializations || [],
       hourlyRate: hourlyRate,
       credentials: additionalData.credentials,
       status: 'pending', // Start as pending until admin verifies
       isVerified: false,
       practiceLocation: additionalData.practiceLocation || {},
+      // Banking details
+      bankDetails: additionalData.bankDetails ? {
+        accountName: additionalData.bankDetails.accountName,
+        bankName: additionalData.bankDetails.bankName,
+        routingNumber: additionalData.bankDetails.routingNumber,
+        accountNumber: additionalData.bankDetails.accountNumber,
+      } : {},
       // Initialize compliance documents structure
       complianceDocuments: {
         // US-based fields (primary)
@@ -86,6 +95,12 @@ const register = asyncHandler(async (req, res) => {
           expirationDate: additionalData.stateLicensure.expirationDate,
           documentUrl: additionalData.stateLicensure.documentUrl,
         } : {},
+        stateLicensures: additionalData.stateLicensures ? additionalData.stateLicensures.map(lic => ({
+          licenseNumber: lic.licenseNumber,
+          state: lic.state,
+          expirationDate: lic.expirationDate,
+          documentUrl: lic.documentUrl
+        })) : [],
         supervision: additionalData.supervision ? {
           supervisingSLPName: additionalData.supervision.supervisingSLPName,
           supervisingSLPLicenseNumber: additionalData.supervision.supervisingSLPLicenseNumber,
