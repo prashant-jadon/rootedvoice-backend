@@ -39,7 +39,7 @@ const getMyEvaluation = asyncHandler(async (req, res) => {
     // Find the latest active evaluation for this client
     const evaluation = await Evaluation.findOne({
         clientId: req.user._id,
-        status: { $in: ['assigned', 'in_progress', 'completed'] }
+        status: { $in: ['pending_creation', 'assigned', 'in_progress', 'completed', 'reviewed'] }
     }).sort({ createdAt: -1 });
 
     if (!evaluation) {
@@ -150,11 +150,35 @@ const getAllEvaluations = asyncHandler(async (req, res) => {
 });
 
 
+// @desc    Mark evaluation as reviewed (Admin)
+// @route   PUT /api/evaluations/:id/review
+// @access  Private/Admin
+const reviewEvaluation = asyncHandler(async (req, res) => {
+    const evaluation = await Evaluation.findById(req.params.id);
+    if (!evaluation) {
+        res.status(404);
+        throw new Error('Evaluation not found');
+    }
+
+    const { adminNotes } = req.body;
+    evaluation.status = 'reviewed';
+    if (adminNotes) {
+        evaluation.adminNotes = adminNotes;
+    }
+    await evaluation.save();
+
+    res.json({
+        success: true,
+        data: evaluation
+    });
+});
+
 module.exports = {
     getEvaluation,
     getMyEvaluation,
     createEvaluation,
     updateEvaluationQuestions,
     submitEvaluation,
-    getAllEvaluations
+    getAllEvaluations,
+    reviewEvaluation
 };

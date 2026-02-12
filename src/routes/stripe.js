@@ -11,6 +11,8 @@ const {
   verifyCheckoutSession,
   handleWebhook,
   getStripeConfig,
+  createSessionPaymentCheckout,
+  verifySessionPayment
 } = require('../controllers/stripeController');
 const { isAdmin } = require('../middlewares/roleCheck');
 
@@ -29,6 +31,8 @@ router.post('/confirm-payment', confirmPayment);
 router.post('/process-session-payment', processSessionPayment);
 router.post('/verify-checkout', verifyCheckoutSession);
 router.post('/refund', isAdmin, refundPayment);
+router.post('/create-session-payment', createSessionPaymentCheckout);
+router.post('/verify-session-payment', verifySessionPayment);
 
 module.exports = router;
 

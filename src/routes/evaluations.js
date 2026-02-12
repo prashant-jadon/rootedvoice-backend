@@ -6,7 +6,8 @@ const {
     createEvaluation,
     updateEvaluationQuestions,
     submitEvaluation,
-    getAllEvaluations
+    getAllEvaluations,
+    reviewEvaluation
 } = require('../controllers/evaluationController');
 
 const { protect, authorize } = require('../middlewares/auth');
@@ -21,6 +22,7 @@ router.get('/', authorize('admin'), getAllEvaluations);
 router.get('/my-evaluation', authorize('client'), getMyEvaluation);
 router.get('/:id', getEvaluation);
 router.put('/:id/questions', authorize('admin', 'therapist'), updateEvaluationQuestions);
+router.put('/:id/review', authorize('admin'), reviewEvaluation);
 router.post('/:id/submit', authorize('client'), submitEvaluation);
 
 module.exports = router;

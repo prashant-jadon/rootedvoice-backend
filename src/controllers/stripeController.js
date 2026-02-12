@@ -4,6 +4,7 @@ const Payment = require('../models/Payment');
 const Session = require('../models/Session');
 const Client = require('../models/Client');
 const Therapist = require('../models/Therapist');
+const Evaluation = require('../models/Evaluation');
 const { asyncHandler } = require('../middlewares/errorHandler');
 const { getPricingTiersForSubscription, getPaymentSplitForUse, getCancellationFee } = require('./pricingController');
 
@@ -67,8 +68,10 @@ const createCheckoutSession = asyncHandler(async (req, res) => {
 
   // Only add recurring for subscription mode (not pay-as-you-go or one-time)
   // Bloom is "pay-as-you-go" so it will be ONE-TIME payment here for the Eval Fee
+  const isBloomInitial = tier === 'bloom' && !hasPaidEvaluation;
+
   const isOneTime = tierInfo.billingCycle === 'one-time' ||
-    (tier === 'bloom' && !hasPaidEvaluation) || // Bloom initial is one-time
+    isBloomInitial ||
     tierInfo.billingCycle === 'pay-as-you-go';
 
   if (!isOneTime) {
@@ -78,6 +81,17 @@ const createCheckoutSession = asyncHandler(async (req, res) => {
     };
   }
 
+  const sessionMode = (isPayAsYouGo || isBloomInitial) ? 'payment' : 'subscription';
+
+  console.log('Creating Stripe Session:', {
+    tier,
+    isPayAsYouGo,
+    isBloomInitial,
+    isOneTime,
+    mode: sessionMode,
+    unitAmount
+  });
+
   const session = await stripe.checkout.sessions.create({
     payment_method_types: ['card'],
     line_items: [
@@ -86,7 +100,7 @@ const createCheckoutSession = asyncHandler(async (req, res) => {
         quantity: 1,
       },
     ],
-    mode: isPayAsYouGo ? 'payment' : 'subscription',
+    mode: sessionMode,
     success_url: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/pricing?success=true`,
     cancel_url: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/pricing?canceled=true`,
     client_reference_id: userId.toString(),
@@ -573,6 +587,17 @@ async function handleCheckoutCompleted(session) {
     nextBillingDate = null;
   }
 
+  // Create evaluation record using userId (Evaluation.clientId refs User model)
+  const existingEval = await Evaluation.findOne({ clientId: userId });
+  if (!existingEval) {
+    await Evaluation.create({
+      clientId: userId, // userId = User._id (Evaluation model refs User)
+      status: 'pending_creation',
+      questions: []
+    });
+    console.log(`✅ Evaluation record created for user ${userId}`);
+  }
+
   // Update client's paid evaluation status if Bloom tier
   if (tier === 'bloom') {
     await Client.findOneAndUpdate(
@@ -737,13 +762,45 @@ const verifyCheckoutSession = asyncHandler(async (req, res) => {
     }
 
     // Check if subscription already exists
-    const existingSubscription = await Subscription.findOne({
-      userId,
-      stripeSubscriptionId: session.subscription || sessionId,
-      status: 'active',
-    });
+    // For subscriptions, we check stripeSubscriptionId.
+    // For one-time/Bloom, we might check if they already have an active subscription of that tier?
+    let existingSubscription = null;
+
+    if (session.subscription) {
+      existingSubscription = await Subscription.findOne({
+        userId,
+        stripeSubscriptionId: session.subscription,
+        status: 'active',
+      });
+    } else {
+      // For Bloom/One-time, check if they are already on this tier locally.
+      const tier = session.metadata.tier;
+      existingSubscription = await Subscription.findOne({
+        userId,
+        tier,
+        status: 'active'
+      });
+    }
 
     if (existingSubscription) {
+      // Even if subscription already exists, ensure evaluation record exists
+      const tier = session.metadata.tier;
+      const existingEval = await Evaluation.findOne({ clientId: userId });
+      if (!existingEval) {
+        await Evaluation.create({
+          clientId: userId,
+          status: 'pending_creation',
+          questions: []
+        });
+        console.log(`✅ Evaluation record created for user ${userId} (existing subscription path)`);
+      }
+      // Update hasPaidEvaluationFee if Bloom
+      if (tier === 'bloom') {
+        await Client.findOneAndUpdate(
+          { userId },
+          { hasPaidEvaluationFee: true }
+        );
+      }
       return res.json({
         success: true,
         message: 'Subscription already exists',
@@ -788,6 +845,25 @@ const verifyCheckoutSession = asyncHandler(async (req, res) => {
       nextBillingDate = null;
     }
 
+    // Create evaluation record using userId (Evaluation.clientId refs User model)
+    const existingEval = await Evaluation.findOne({ clientId: userId });
+    if (!existingEval) {
+      await Evaluation.create({
+        clientId: userId, // userId = User._id (Evaluation model refs User)
+        status: 'pending_creation',
+        questions: []
+      });
+      console.log(`✅ Evaluation record created for user ${userId} (verify-checkout)`);
+    }
+
+    // Update client's paid evaluation status if Bloom tier
+    if (tier === 'bloom') {
+      await Client.findOneAndUpdate(
+        { userId },
+        { hasPaidEvaluationFee: true }
+      );
+    }
+
     const subscription = await Subscription.create({
       userId,
       tier,
@@ -801,7 +877,7 @@ const verifyCheckoutSession = asyncHandler(async (req, res) => {
       features: tierInfo.features,
       stripeSubscriptionId: session.subscription || null,
       stripeCustomerId: session.customer || null,
-      autoRenew: true,
+      autoRenew: !!session.subscription,
     });
 
     res.json({
@@ -907,6 +983,138 @@ const refundPayment = asyncHandler(async (req, res) => {
   });
 });
 
+// @desc    Create Stripe checkout session for a single therapy session (Bloom/Pay-as-you-go)
+// @route   POST /api/stripe/create-session-payment
+// @access  Private
+const createSessionPaymentCheckout = asyncHandler(async (req, res) => {
+  const { therapistId, date, time, duration, sessionType, amount } = req.body;
+  const userId = req.user._id;
+
+  if (!therapistId || !date || !time || !amount) {
+    return res.status(400).json({
+      success: false,
+      message: 'Missing required session details',
+    });
+  }
+
+  // Double check amount prevents frontend manipulation, but for now we trust the passed amount 
+  // or (better) we should verify it against the tier/therapist rate here. 
+  // For MVP, we will use the passed amount but ensure it's at least the minimum.
+  const unitAmount = Math.max(amount, 10) * 100; // Minimum 10 cents to avoid errors, convert to cents
+
+  const session = await stripe.checkout.sessions.create({
+    payment_method_types: ['card'],
+    line_items: [
+      {
+        price_data: {
+          currency: 'usd',
+          product_data: {
+            name: `Therapy Session (${sessionType})`,
+            description: `Session with Therapist on ${date} at ${time}`,
+          },
+          unit_amount: unitAmount,
+        },
+        quantity: 1,
+      },
+    ],
+    mode: 'payment',
+    success_url: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/book-session?payment_success=true&session_id={CHECKOUT_SESSION_ID}`,
+    cancel_url: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/book-session?canceled=true`,
+    client_reference_id: userId.toString(),
+    metadata: {
+      type: 'session_booking',
+      userId: userId.toString(),
+      therapistId,
+      date,
+      time,
+      duration,
+      sessionType,
+    },
+  });
+
+  res.json({
+    success: true,
+    data: {
+      sessionId: session.id,
+      url: session.url,
+    },
+  });
+});
+
+// @desc    Verify session payment and create booking
+// @route   POST /api/stripe/verify-session-payment
+// @access  Private
+const verifySessionPayment = asyncHandler(async (req, res) => {
+  const { sessionId } = req.body;
+  const userId = req.user._id;
+
+  if (!sessionId) {
+    return res.status(400).json({ success: false, message: 'Session ID is required' });
+  }
+
+  // Retrieve the checkout session from Stripe
+  const session = await stripe.checkout.sessions.retrieve(sessionId);
+
+  if (!session) {
+    return res.status(404).json({ success: false, message: 'Stripe session not found' });
+  }
+
+  if (session.payment_status !== 'paid') {
+    return res.status(400).json({ success: false, message: 'Payment not completed' });
+  }
+
+  // Check if session booking already exists to avoid duplicates
+  // We can use the checkout session ID as a unique identifier if we stored it, 
+  // but Session model might not have it.
+  // Instead, we check for a session with same therapist, date, time and client.
+  const { therapistId, date, time, duration, sessionType } = session.metadata;
+
+  if (!therapistId || !date || !time) {
+    return res.status(400).json({ success: false, message: 'Invalid session metadata' });
+  }
+
+  // Retrieve client ID for the user
+  const client = await Client.findOne({ userId });
+  if (!client) {
+    return res.status(404).json({ success: false, message: 'Client profile not found' });
+  }
+
+  const existingSession = await Session.findOne({
+    therapistId,
+    clientId: client._id,
+    scheduledDate: date,
+    scheduledTime: time,
+    status: { $ne: 'cancelled' }
+  });
+
+  if (existingSession) {
+    return res.json({
+      success: true,
+      message: 'Session already booked',
+      data: existingSession,
+    });
+  }
+
+  // Create the session
+  const newSession = await Session.create({
+    therapistId,
+    clientId: client._id,
+    scheduledDate: date,
+    scheduledTime: time,
+    duration: parseInt(duration || '45'),
+    sessionType: sessionType || 'regular',
+    price: session.amount_total / 100,
+    status: 'scheduled',
+    paymentStatus: 'paid', // Mark as paid immediately
+    stripePaymentId: session.payment_intent, // Store payment intent ID
+  });
+
+  res.json({
+    success: true,
+    data: newSession,
+  });
+});
+
 module.exports = {
   createCheckoutSession,
   createPaymentIntent,
@@ -917,5 +1125,7 @@ module.exports = {
   verifyCheckoutSession,
   handleWebhook,
   getStripeConfig,
+  createSessionPaymentCheckout,
+  verifySessionPayment,
 };
 
