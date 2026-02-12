@@ -18,6 +18,7 @@ const translationRoutes = require('./translation');
 const calendarRoutes = require('./calendar');
 const familyCoachingRoutes = require('./familyCoaching');
 const pushRoutes = require('./push');
+const evaluationRoutes = require('./evaluations');
 
 // Mount routes
 router.use('/auth', authRoutes);
@@ -35,6 +36,7 @@ router.use('/translation', translationRoutes);
 router.use('/calendar', calendarRoutes);
 router.use('/family-coaching', familyCoachingRoutes);
 router.use('/push', pushRoutes);
+router.use('/evaluations', evaluationRoutes);
 
 // Public routes
 router.get('/public/platform-stats', getPlatformStats);

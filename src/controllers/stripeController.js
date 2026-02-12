@@ -14,7 +14,7 @@ const createCheckoutSession = asyncHandler(async (req, res) => {
   const { tier } = req.body;
   const userId = req.user._id;
 
-  const PRICING_TIERS = getPricingTiersForSubscription();
+  const PRICING_TIERS = await getPricingTiersForSubscription();
   const tierInfo = PRICING_TIERS[tier];
 
   if (!tierInfo) {
@@ -37,21 +37,40 @@ const createCheckoutSession = asyncHandler(async (req, res) => {
     });
   }
 
+  // Check if client has already paid evaluation fee
+  const client = await Client.findOne({ userId });
+  const hasPaidEvaluation = client?.hasPaidEvaluationFee || false;
+
   // Create Stripe checkout session
   const isPayAsYouGo = tierInfo.billingCycle === 'pay-as-you-go';
-  
+
   // Build price_data object conditionally
+  let unitAmount = tierInfo.price * 100; // Default price
+  let description = `${tierInfo.sessionsPerMonth} sessions per month`;
+
+  // BLOOM LOGIC: If Bloom tier AND hasn't paid eval fee, charge the Evaluation Price ($195)
+  // The monthly/session price ($125) will be charged when they book later
+  // This initial payment sets them up as a "Bloom" client with eval paid
+  if (tier === 'bloom' && !hasPaidEvaluation) {
+    unitAmount = (tierInfo.evaluationPrice || 195) * 100;
+    description = 'Initial Evaluation Fee + Bloom Access';
+  }
+
   const priceData = {
     currency: 'usd',
     product_data: {
       name: tierInfo.name,
-      description: `${tierInfo.sessionsPerMonth} sessions per month`,
+      description: description,
     },
-    unit_amount: tierInfo.price * 100, // Convert to cents
+    unit_amount: unitAmount,
   };
 
   // Only add recurring for subscription mode (not pay-as-you-go or one-time)
-  const isOneTime = tierInfo.billingCycle === 'one-time' || tierInfo.billingCycle === 'pay-as-you-go';
+  // Bloom is "pay-as-you-go" so it will be ONE-TIME payment here for the Eval Fee
+  const isOneTime = tierInfo.billingCycle === 'one-time' ||
+    (tier === 'bloom' && !hasPaidEvaluation) || // Bloom initial is one-time
+    tierInfo.billingCycle === 'pay-as-you-go';
+
   if (!isOneTime) {
     priceData.recurring = {
       interval: tierInfo.billingCycle === 'every-4-weeks' ? 'month' : 'month',
@@ -331,7 +350,7 @@ const confirmPayment = asyncHandler(async (req, res) => {
   if (paymentIntent.status === 'succeeded') {
     // Payment already succeeded (webhook may have processed it)
     const payment = await Payment.findOne({ stripePaymentIntentId: paymentIntentId });
-    
+
     if (payment && payment.status === 'completed') {
       return res.json({
         success: true,
@@ -531,7 +550,7 @@ async function handleCheckoutCompleted(session) {
 
   if (!userId || !tier) return;
 
-  const PRICING_TIERS = getPricingTiersForSubscription();
+  const PRICING_TIERS = await getPricingTiersForSubscription();
   const tierInfo = PRICING_TIERS[tier];
 
   if (!tierInfo) return;
@@ -545,13 +564,21 @@ async function handleCheckoutCompleted(session) {
   // Create new subscription
   const startDate = new Date();
   let nextBillingDate = new Date();
-  
+
   if (tierInfo.billingCycle === 'every-4-weeks') {
     nextBillingDate.setDate(nextBillingDate.getDate() + 28);
   } else if (tierInfo.billingCycle === 'monthly') {
     nextBillingDate.setMonth(nextBillingDate.getMonth() + 1);
   } else {
     nextBillingDate = null;
+  }
+
+  // Update client's paid evaluation status if Bloom tier
+  if (tier === 'bloom') {
+    await Client.findOneAndUpdate(
+      { userId },
+      { hasPaidEvaluationFee: true }
+    );
   }
 
   await Subscription.create({
@@ -733,7 +760,7 @@ const verifyCheckoutSession = asyncHandler(async (req, res) => {
       });
     }
 
-    const PRICING_TIERS = getPricingTiersForSubscription();
+    const PRICING_TIERS = await getPricingTiersForSubscription();
     const tierInfo = PRICING_TIERS[tier];
 
     if (!tierInfo) {
@@ -752,7 +779,7 @@ const verifyCheckoutSession = asyncHandler(async (req, res) => {
     // Create new subscription
     const startDate = new Date();
     let nextBillingDate = new Date();
-    
+
     if (tierInfo.billingCycle === 'every-4-weeks') {
       nextBillingDate.setDate(nextBillingDate.getDate() + 28);
     } else if (tierInfo.billingCycle === 'monthly') {

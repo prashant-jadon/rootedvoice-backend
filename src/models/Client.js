@@ -210,6 +210,12 @@ const clientSchema = new mongoose.Schema({
       maxlength: 2000,
     },
   },
+  // Flag to track if client has paid the initial evaluation fee
+  // Required for Bloom/Pay-as-you-go clients before booking
+  hasPaidEvaluationFee: {
+    type: Boolean,
+    default: false,
+  },
 }, {
   timestamps: true,
 });
@@ -220,7 +226,7 @@ clientSchema.index({ assignedTherapist: 1 });
 clientSchema.index({ dateOfBirth: 1 });
 
 // Virtual for age
-clientSchema.virtual('age').get(function() {
+clientSchema.virtual('age').get(function () {
   if (!this.dateOfBirth) return null;
   const today = new Date();
   const birthDate = new Date(this.dateOfBirth);
@@ -233,7 +239,7 @@ clientSchema.virtual('age').get(function() {
 });
 
 // Virtual for age group
-clientSchema.virtual('ageGroup').get(function() {
+clientSchema.virtual('ageGroup').get(function () {
   const age = this.age;
   if (age === null) return 'Unknown';
   if (age <= 3) return '0-3';

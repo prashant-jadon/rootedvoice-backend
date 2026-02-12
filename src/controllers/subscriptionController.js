@@ -3,14 +3,14 @@ const User = require('../models/User');
 const { asyncHandler } = require('../middlewares/errorHandler');
 const { getPricingTiersForSubscription } = require('./pricingController');
 
-// Get pricing tiers from pricing controller
-const getPRICING_TIERS = () => getPricingTiersForSubscription();
+// Get pricing tiers from pricing controller (async)
+const getPRICING_TIERS = async () => await getPricingTiersForSubscription();
 
 // @desc    Get all pricing tiers
 // @route   GET /api/subscriptions/pricing
 // @access  Public
 const getPricingTiers = asyncHandler(async (req, res) => {
-  const PRICING_TIERS = getPRICING_TIERS();
+  const PRICING_TIERS = await getPRICING_TIERS();
   res.json({
     success: true,
     data: PRICING_TIERS,
@@ -23,7 +23,7 @@ const getPricingTiers = asyncHandler(async (req, res) => {
 const subscribeToPlan = asyncHandler(async (req, res) => {
   const { tier } = req.body;
   const userId = req.user._id;
-  const PRICING_TIERS = getPRICING_TIERS();
+  const PRICING_TIERS = await getPRICING_TIERS();
 
   // Validate tier
   if (!PRICING_TIERS[tier]) {
@@ -52,7 +52,7 @@ const subscribeToPlan = asyncHandler(async (req, res) => {
   // Calculate billing dates
   const startDate = new Date();
   let nextBillingDate = new Date();
-  
+
   if (tierInfo.billingCycle === 'every-4-weeks') {
     nextBillingDate.setDate(nextBillingDate.getDate() + 28); // 4 weeks
   } else if (tierInfo.billingCycle === 'monthly') {
@@ -205,7 +205,7 @@ const getRemainingSessions = asyncHandler(async (req, res) => {
   // Calculate billing period (from subscription start date or current month)
   const now = new Date();
   let periodStart, periodEnd;
-  
+
   if (subscription.startDate) {
     // Calculate based on billing cycle
     if (subscription.billingCycle === 'every-4-weeks') {

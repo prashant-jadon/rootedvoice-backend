@@ -14,7 +14,7 @@ const getSessions = asyncHandler(async (req, res) => {
 
   // Build filter based on user role
   const filter = {};
-  
+
   if (req.user.role === 'therapist') {
     const therapist = await Therapist.findOne({ userId: req.user._id });
     if (therapist) {
@@ -151,7 +151,7 @@ const createSession = asyncHandler(async (req, res) => {
     if (!therapistId) missing.push('therapistId');
     if (!scheduledDate) missing.push('scheduledDate');
     if (!scheduledTime) missing.push('scheduledTime');
-    
+
     console.log('Missing fields:', missing);
     return res.status(400).json({
       success: false,
@@ -212,12 +212,79 @@ const createSession = asyncHandler(async (req, res) => {
 
   // Calculate session price
   let sessionPrice = price;
+
+  // --- INITIAL EVALUATION LOGIC ---
   if (sessionType === 'initial') {
-    sessionPrice = 0; // Initial consultations are free
-  } else if (!sessionPrice && therapist.hourlyRate) {
-    sessionPrice = therapist.hourlyRate;
-  } else if (!sessionPrice) {
-    sessionPrice = 85; // Default price
+    // Check if user has a subscription that includes evaluation
+    const Subscription = require('../models/Subscription');
+    const { getPricingTiersForSubscription } = require('./pricingController');
+    const pricingTiers = await getPricingTiersForSubscription();
+
+    const activeSub = await Subscription.findOne({
+      userId: client.userId,
+      status: 'active'
+    });
+
+    // Check if client has already paid evaluation fee (e.g., Bloom upfront payment)
+    const hasPaidEvaluation = client.hasPaidEvaluationFee || false;
+
+    // If active subscription exists and includes evaluation, it's FREE
+    if (activeSub && pricingTiers[activeSub.tier]?.includesEvaluation) {
+      sessionPrice = 0;
+    }
+    // If they already paid the evaluation fee (Bloom model), it's FREE to book the session
+    else if (hasPaidEvaluation) {
+      sessionPrice = 0;
+    }
+    else {
+      // Otherwise, charge the standard Evaluation price ($195)
+      // BUT WAIT: For Bloom, we WANT to force them to pay upfront via Stripe subscription flow
+      // So if they are trying to book an evaluation without having paid the fee, AND they are on Bloom...
+      if (activeSub && activeSub.tier === 'bloom') {
+        return res.status(403).json({
+          success: false,
+          message: 'Initial Evaluation fee ($195) has not been paid. Please update your subscription payment.',
+          requiresPayment: true
+        });
+      }
+
+      sessionPrice = pricingTiers.evaluation?.price || 195;
+    }
+  }
+  // --- REGULAR SESSION LOGIC ---
+  else {
+    // ENFORCE EVALUATION REQUIREMENT
+    // Check if client has completed an evaluation
+    const Evaluation = require('../models/Evaluation');
+    const completedEval = await Evaluation.findOne({
+      clientId: clientId,
+      status: 'completed'
+    });
+
+    // Also check if they have a legacy "Evaluation" session marked as completed
+    // (for backward compatibility if they didn't use the new form system yet)
+    const legacyEvalSession = await Session.findOne({
+      clientId: clientId,
+      sessionType: 'initial',
+      status: 'completed'
+    });
+
+    if (!completedEval && !legacyEvalSession) {
+      // Allow booking if they are an ADMIN or special case, maybe? 
+      // For now, STRICT enforcement as requested.
+      return res.status(403).json({
+        success: false,
+        message: 'You must complete an Initial Evaluation before booking regular sessions. Please book an Initial Consultation first.',
+        requiresEvaluation: true
+      });
+    }
+
+    // Pricing for Regular Sessions
+    if (!sessionPrice && therapist.hourlyRate) {
+      sessionPrice = therapist.hourlyRate;
+    } else if (!sessionPrice) {
+      sessionPrice = 85; // Default
+    }
   }
 
   // Get rate caps and ALWAYS enforce them (even if price comes from therapist.hourlyRate)
@@ -292,7 +359,7 @@ const createSession = asyncHandler(async (req, res) => {
         // Calculate billing period
         const now = new Date();
         let periodStart, periodEnd;
-        
+
         if (subscription.startDate) {
           if (subscription.billingCycle === 'every-4-weeks') {
             const weeksSinceStart = Math.floor((now - subscription.startDate) / (7 * 24 * 60 * 60 * 1000));
@@ -451,7 +518,7 @@ const cancelSession = asyncHandler(async (req, res) => {
   if (isTherapistLogging && ['SLP', 'SLPA'].includes(credentialType)) {
     // Therapist logged the cancellation - create payment record for cancellation fee
     const cancellationFee = getCancellationFee(credentialType);
-    
+
     // Update session price to cancellation fee
     session.price = cancellationFee;
     session.paymentStatus = 'pending'; // Will be processed separately
@@ -527,7 +594,7 @@ const startSession = asyncHandler(async (req, res) => {
     const { generateSessionMeetingLink } = require('../utils/jitsiService');
     const user = req.user;
     const meetingInfo = generateSessionMeetingLink(session, user);
-    
+
     session.meetingLink = meetingInfo.meetingLink;
     session.jitsiRoomName = meetingInfo.roomName;
   }
@@ -561,7 +628,7 @@ const completeSession = asyncHandler(async (req, res) => {
 
   session.status = 'completed';
   session.actualEndTime = new Date();
-  
+
   if (req.body.notes) {
     session.notes = req.body.notes;
   }
@@ -582,7 +649,7 @@ const completeSession = asyncHandler(async (req, res) => {
     try {
       const { generateSoapNote } = require('../utils/aiSoapNoteService');
       const Client = require('../models/Client');
-      
+
       const client = await Client.findById(session.clientId)
         .populate('userId', 'firstName lastName');
 

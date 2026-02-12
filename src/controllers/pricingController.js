@@ -1,21 +1,23 @@
 const { asyncHandler } = require('../middlewares/errorHandler');
+const PricingTier = require('../models/PricingTier');
 
-// In-memory pricing storage (in production, use database)
-// This will be replaced with database model later
-let PRICING_TIERS = {
+// Initial seed data (fallback/default)
+const DEFAULT_PRICING_TIERS = {
   rooted: {
     name: 'Rooted Tier',
     price: 229,
     duration: 45,
     billingCycle: 'monthly',
     sessionsPerMonth: 2,
+    includesEvaluation: true,
     features: [
       '2 sessions per month (45 minutes each)',
       'Personalized treatment plan',
       'Progress updates every 8-10 weeks',
       'Caregiver tips',
       'HIPAA-compliant platform',
-      'Email support'
+      'Email support',
+      'Initial Evaluation Included'
     ]
   },
   flourish: {
@@ -24,6 +26,7 @@ let PRICING_TIERS = {
     duration: 45,
     billingCycle: 'monthly',
     sessionsPerMonth: 4,
+    includesEvaluation: true,
     features: [
       '4 sessions per month (45 minutes each)',
       'Advanced treatment strategies',
@@ -31,19 +34,22 @@ let PRICING_TIERS = {
       'Monthly family coaching',
       'Priority scheduling',
       'Provider collaboration',
-      'Direct messaging'
+      'Direct messaging',
+      'Initial Evaluation Included'
     ],
     popular: true
   },
   bloom: {
-    name: 'Bloom Tier',
-    price: 749,
+    name: 'Bloom (Pay-As-You-Go)',
+    price: 125,
     duration: 45,
-    billingCycle: 'monthly',
-    sessionsPerMonth: 8,
+    billingCycle: 'pay-as-you-go',
+    sessionsPerMonth: 0,
+    includesEvaluation: false,
+    evaluationPrice: 195,
     features: [
-      '8 sessions per month (45 minutes each)',
-      'Intensive therapy support',
+      'Pay-as-you-go sessions ($125/session)',
+      'Initial Evaluation Required ($195)',
       'Flexible scheduling',
       'Priority access to therapists',
       'Comprehensive progress tracking',
@@ -52,35 +58,56 @@ let PRICING_TIERS = {
     ]
   },
   'pay-as-you-go': {
-    name: 'Pay-As-You-Go',
+    name: 'Pay-As-You-Go (Legacy)',
     price: 125,
     duration: 45,
     billingCycle: 'pay-as-you-go',
     sessionsPerMonth: 1,
+    includesEvaluation: false,
     features: [
       '1 session (45 minutes)',
       'No subscription required',
       'Flexible scheduling',
       'Pay per session',
-      'Perfect for occasional support',
       'HIPAA-compliant platform'
     ]
   },
   evaluation: {
-    name: 'Evaluation',
-    price: 260,
-    duration: 75,
+    name: 'Initial Evaluation',
+    price: 195,
+    duration: 60,
     billingCycle: 'one-time',
     sessionsPerMonth: 0,
+    includesEvaluation: false,
     features: [
       '60-75 minute comprehensive evaluation',
       'Detailed assessment report',
       'Treatment recommendations',
-      'No subscription required',
-      'One-time payment'
+      'Required before bookings',
+      'Included in Subscription Plans'
     ]
   }
 };
+
+// Seeding function (called when module loads, purely side-effect safe)
+const seedPricingTiers = async () => {
+  try {
+    const count = await PricingTier.countDocuments();
+    if (count === 0) {
+      console.log('Seeding pricing tiers...');
+      const operations = Object.entries(DEFAULT_PRICING_TIERS).map(([id, data]) => {
+        return PricingTier.create({ id, ...data });
+      });
+      await Promise.all(operations);
+      console.log('Pricing tiers seeded successfully');
+    }
+  } catch (error) {
+    console.error('Error seeding pricing tiers:', error);
+  }
+};
+
+// Seed on startup (non-blocking)
+seedPricingTiers();
 
 // NOTE: Payment split configuration is DEPRECATED
 // Therapists are now paid a fixed hourly rate based on their tier
@@ -110,13 +137,25 @@ let CANCELLATION_FEES = {
   SLP: 20,  // $20 flat rate for SLP cancellations
 };
 
+// Helper: Convert DB array to Object format for backward compatibility
+const formatTiersToObject = (tiersArray) => {
+  return tiersArray.reduce((acc, tier) => {
+    acc[tier.id] = tier.toObject();
+    return acc;
+  }, {});
+};
+
 // @desc    Get all pricing tiers
 // @route   GET /api/admin/pricing
 // @access  Private/Admin
 const getPricingTiers = asyncHandler(async (req, res) => {
+  const tiers = await PricingTier.find({});
+  // Convert to object format to match expected frontend structure
+  const formattedTiers = formatTiersToObject(tiers);
+
   res.json({
     success: true,
-    data: PRICING_TIERS,
+    data: formattedTiers,
   });
 });
 
@@ -124,25 +163,36 @@ const getPricingTiers = asyncHandler(async (req, res) => {
 // @route   PUT /api/admin/pricing/:tier
 // @access  Private/Admin
 const updatePricingTier = asyncHandler(async (req, res) => {
-  const { tier } = req.params;
+  const { tier: tierId } = req.params;
   const updates = req.body;
 
-  if (!PRICING_TIERS[tier]) {
-    return res.status(404).json({
-      success: false,
-      message: 'Pricing tier not found',
-    });
+  let pricingTier = await PricingTier.findOne({ id: tierId });
+
+  if (!pricingTier) {
+    // If not found in DB, try to see if it's in default and creates it (lazy migration)
+    if (DEFAULT_PRICING_TIERS[tierId]) {
+      pricingTier = await PricingTier.create({ id: tierId, ...DEFAULT_PRICING_TIERS[tierId] });
+    } else {
+      return res.status(404).json({
+        success: false,
+        message: 'Pricing tier not found',
+      });
+    }
   }
 
-  PRICING_TIERS[tier] = {
-    ...PRICING_TIERS[tier],
-    ...updates,
-  };
+  // Update fields
+  Object.keys(updates).forEach(key => {
+    if (key !== 'id' && key !== '_id') {
+      pricingTier[key] = updates[key];
+    }
+  });
+
+  await pricingTier.save();
 
   res.json({
     success: true,
     message: 'Pricing tier updated successfully',
-    data: PRICING_TIERS[tier],
+    data: pricingTier,
   });
 });
 
@@ -150,16 +200,16 @@ const updatePricingTier = asyncHandler(async (req, res) => {
 // @route   DELETE /api/admin/pricing/:tier
 // @access  Private/Admin
 const deletePricingTier = asyncHandler(async (req, res) => {
-  const { tier } = req.params;
+  const { tier: tierId } = req.params;
 
-  if (!PRICING_TIERS[tier]) {
+  const result = await PricingTier.findOneAndDelete({ id: tierId });
+
+  if (!result) {
     return res.status(404).json({
       success: false,
       message: 'Pricing tier not found',
     });
   }
-
-  delete PRICING_TIERS[tier];
 
   res.json({
     success: true,
@@ -171,7 +221,7 @@ const deletePricingTier = asyncHandler(async (req, res) => {
 // @route   POST /api/admin/pricing
 // @access  Private/Admin
 const createPricingTier = asyncHandler(async (req, res) => {
-  const { tier, name, price, duration, billingCycle, sessionsPerMonth, features, description, icon, popular, monthlyPrice, perSessionPrice, durationRange } = req.body;
+  const { tier, name, price, duration, billingCycle, sessionsPerMonth, features, description, icon, popular, monthlyPrice, perSessionPrice, durationRange, includesEvaluation, evaluationPrice } = req.body;
 
   if (!tier || !name || !price) {
     return res.status(400).json({
@@ -180,19 +230,24 @@ const createPricingTier = asyncHandler(async (req, res) => {
     });
   }
 
-  if (PRICING_TIERS[tier]) {
+  const existingTier = await PricingTier.findOne({ id: tier });
+
+  if (existingTier) {
     return res.status(400).json({
       success: false,
       message: 'Pricing tier already exists',
     });
   }
 
-  PRICING_TIERS[tier] = {
+  const newTier = await PricingTier.create({
+    id: tier,
     name,
     price,
     duration: duration || 60,
     billingCycle: billingCycle || 'monthly',
     sessionsPerMonth: sessionsPerMonth || 0,
+    includesEvaluation: includesEvaluation !== undefined ? includesEvaluation : false,
+    evaluationPrice: evaluationPrice || undefined,
     features: features || [],
     description: description || '',
     icon: icon || '',
@@ -200,12 +255,12 @@ const createPricingTier = asyncHandler(async (req, res) => {
     monthlyPrice: monthlyPrice || price,
     perSessionPrice: perSessionPrice || (sessionsPerMonth > 0 ? price / sessionsPerMonth : price),
     durationRange: durationRange || '',
-  };
+  });
 
   res.status(201).json({
     success: true,
     message: 'Pricing tier created successfully',
-    data: PRICING_TIERS[tier],
+    data: newTier,
   });
 });
 
@@ -245,9 +300,9 @@ const updatePaymentSplit = asyncHandler(async (req, res) => {
       therapistFeePercent: 100 - platformFeePercent,
     };
     PAYMENT_SPLIT.SLPA = {
-    platformFeePercent,
-    therapistFeePercent: 100 - platformFeePercent,
-  };
+      platformFeePercent,
+      therapistFeePercent: 100 - platformFeePercent,
+    };
   }
 
   res.json({
@@ -329,7 +384,15 @@ const updateRateCaps = asyncHandler(async (req, res) => {
 });
 
 // Export pricing tiers for use in subscription controller
-const getPricingTiersForSubscription = () => PRICING_TIERS;
+// NOTE: This now returns a Promise because it fetches from DB
+const getPricingTiersForSubscription = async () => {
+  const tiers = await PricingTier.find({});
+  // If DB is empty, return defaults (fallback)
+  if (tiers.length === 0) {
+    return DEFAULT_PRICING_TIERS;
+  }
+  return formatTiersToObject(tiers);
+};
 
 // Export payment split for use in other controllers
 // Returns split based on credential type, defaults to SLP if not specified
