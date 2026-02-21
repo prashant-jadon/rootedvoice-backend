@@ -1,28 +1,52 @@
 const express = require('express');
 const router = express.Router();
 const {
-    getEvaluation,
+    bookEvaluation,
+    evaluationPaymentComplete,
+    getAvailableTherapists,
+    selectTherapist,
+    therapistStartReview,
+    therapistReady,
+    startMeeting,
+    completeEvaluation,
     getMyEvaluation,
-    createEvaluation,
-    updateEvaluationQuestions,
-    submitEvaluation,
+    getEvaluation,
+    getTherapistEvaluationDetails,
     getAllEvaluations,
-    reviewEvaluation
+    getTherapistEvaluations,
+    cancelEvaluation,
+    adminAssignTherapist,
 } = require('../controllers/evaluationController');
 
 const { protect, authorize } = require('../middlewares/auth');
 
-// Public routes (none for now)
-
-// Protected routes
+// All routes are protected
 router.use(protect);
 
-router.post('/', authorize('admin', 'therapist'), createEvaluation);
-router.get('/', authorize('admin'), getAllEvaluations);
+// Client routes
+router.post('/book', authorize('client'), bookEvaluation);
+router.post('/payment-complete', authorize('client'), evaluationPaymentComplete);
+router.get('/available-therapists', authorize('client'), getAvailableTherapists);
+router.post('/select-therapist', authorize('client'), selectTherapist);
 router.get('/my-evaluation', authorize('client'), getMyEvaluation);
+
+// Therapist routes
+router.get('/my-assignments', authorize('therapist'), getTherapistEvaluations);
+router.post('/:id/start-review', authorize('therapist'), therapistStartReview);
+router.post('/:id/therapist-ready', authorize('therapist'), therapistReady);
+router.post('/:id/complete', authorize('therapist'), completeEvaluation);
+router.get('/:id/details', authorize('therapist'), getTherapistEvaluationDetails);
+
+// Shared routes (accessible by both client and therapist)
+router.post('/:id/start-meeting', startMeeting);
 router.get('/:id', getEvaluation);
-router.put('/:id/questions', authorize('admin', 'therapist'), updateEvaluationQuestions);
-router.put('/:id/review', authorize('admin'), reviewEvaluation);
-router.post('/:id/submit', authorize('client'), submitEvaluation);
+
+// Client cancel
+router.post('/:id/cancel', cancelEvaluation);
+
+// Admin routes
+router.get('/', authorize('admin'), getAllEvaluations);
+router.put('/:id/assign-therapist', authorize('admin'), adminAssignTherapist);
 
 module.exports = router;
+

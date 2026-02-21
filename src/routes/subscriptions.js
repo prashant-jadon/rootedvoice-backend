@@ -7,6 +7,7 @@ const {
   cancelSubscription,
   getSubscriptionHistory,
   getRemainingSessions,
+  getEvaluationCreditStatus,
 } = require('../controllers/subscriptionController');
 const { protect } = require('../middlewares/auth');
 
@@ -17,6 +18,7 @@ router.get('/pricing', getPricingTiers);
 router.post('/subscribe', protect, subscribeToPlan);
 router.get('/current', protect, getCurrentSubscription);
 router.get('/remaining-sessions', protect, getRemainingSessions);
+router.get('/evaluation-credit', protect, getEvaluationCreditStatus);
 router.delete('/cancel', protect, cancelSubscription);
 router.get('/history', protect, getSubscriptionHistory);
 

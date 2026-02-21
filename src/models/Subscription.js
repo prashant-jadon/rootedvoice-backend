@@ -66,6 +66,37 @@ const subscriptionSchema = new mongoose.Schema({
   cancellationReason: {
     type: String,
   },
+  // Evaluation credit applied to this subscription
+  evaluationCreditApplied: {
+    amount: {
+      type: Number,
+      default: 0,
+    },
+    evaluationId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Evaluation',
+    },
+  },
+  // Upgrade tracking
+  upgradedFrom: {
+    subscriptionId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Subscription',
+    },
+    creditAmount: {
+      type: Number,
+      default: 0,
+    },
+  },
+  // Session rollover
+  rolloverSessionsReceived: {
+    type: Number,
+    default: 0,
+  },
+  unusedSessionsAtEnd: {
+    type: Number,
+    default: 0,
+  },
 }, {
   timestamps: true,
 });

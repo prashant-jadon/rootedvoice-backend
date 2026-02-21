@@ -1,5 +1,6 @@
 const Subscription = require('../models/Subscription');
 const User = require('../models/User');
+const Client = require('../models/Client');
 const { asyncHandler } = require('../middlewares/errorHandler');
 const { getPricingTiersForSubscription } = require('./pricingController');
 
@@ -246,7 +247,12 @@ const getRemainingSessions = asyncHandler(async (req, res) => {
 
   const totalSessions = subscription.sessionsPerMonth || 0;
   const hasUnlimited = totalSessions === 0 || totalSessions === -1;
-  const remainingSessions = hasUnlimited ? -1 : Math.max(0, totalSessions - usedSessions);
+
+  // Include rollover sessions
+  const rolloverCount = client.rolloverSessions?.count || 0;
+  const rolloverReceived = subscription.rolloverSessionsReceived || 0;
+  const totalAvailable = hasUnlimited ? -1 : totalSessions + rolloverCount + rolloverReceived;
+  const remainingSessions = hasUnlimited ? -1 : Math.max(0, totalAvailable - usedSessions);
 
   res.json({
     success: true,
@@ -264,7 +270,28 @@ const getRemainingSessions = asyncHandler(async (req, res) => {
         billingCycle: subscription.billingCycle,
         nextBillingDate: subscription.nextBillingDate,
       },
+      rolloverSessions: rolloverCount + rolloverReceived,
+      evaluationCredit: client.evaluationCredit || null,
     },
+  });
+});
+
+// @desc    Get evaluation credit status
+// @route   GET /api/subscriptions/evaluation-credit
+// @access  Private
+const getEvaluationCreditStatus = asyncHandler(async (req, res) => {
+  const client = await Client.findOne({ userId: req.user._id });
+
+  if (!client || !client.evaluationCredit) {
+    return res.json({
+      success: true,
+      data: { amount: 0, status: 'none' },
+    });
+  }
+
+  res.json({
+    success: true,
+    data: client.evaluationCredit,
   });
 });
 
@@ -275,5 +302,5 @@ module.exports = {
   cancelSubscription,
   getSubscriptionHistory,
   getRemainingSessions,
+  getEvaluationCreditStatus,
 };
-

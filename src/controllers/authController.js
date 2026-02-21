@@ -30,146 +30,155 @@ const register = asyncHandler(async (req, res) => {
     phone,
   });
 
-  // Create role-specific profile
-  if (role === 'therapist') {
-    // Validate credentials
-    if (!additionalData.credentials || !['SLP', 'SLPA'].includes(additionalData.credentials)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Valid credentials (SLP or SLPA) are required',
+  try {
+    // Create role-specific profile
+    if (role === 'therapist') {
+      // Validate credentials
+      if (!additionalData.credentials || !['SLP', 'SLPA'].includes(additionalData.credentials)) {
+        throw new Error('VALIDATION:Valid credentials (SLP or SLPA) are required');
+      }
+
+      const providedLicense = additionalData.licenseNumber ||
+        additionalData.spaMembershipNumber ||
+        (additionalData.stateLicensure && additionalData.stateLicensure.licenseNumber) ||
+        (additionalData.stateLicensures && additionalData.stateLicensures.length > 0 && additionalData.stateLicensures[0].licenseNumber);
+
+      // Validate required fields
+      if (!providedLicense) {
+        throw new Error('VALIDATION:License number or SPA membership number is required');
+      }
+
+      // Get rate caps for validation
+      const { getRateCapsForUse } = require('./pricingController');
+      const rateCaps = getRateCapsForUse();
+      const maxRate = rateCaps[additionalData.credentials] || rateCaps.SLP;
+      const hourlyRate = additionalData.hourlyRate || (additionalData.credentials === 'SLP' ? 75 : 55);
+
+      if (hourlyRate > maxRate) {
+        throw new Error(`VALIDATION:Hourly rate for ${additionalData.credentials} cannot exceed $${maxRate}/hour`);
+      }
+
+      // Create therapist with pending status (requires admin verification)
+      const therapist = await Therapist.create({
+        userId: user._id,
+        licenseNumber: providedLicense || 'TEMP-' + Date.now(),
+        licensedStates: additionalData.stateLicensures
+          ? [...new Set(additionalData.stateLicensures.map(l => l.state))]
+          : (additionalData.licensedStates || []),
+        specializations: additionalData.specializations || [],
+        hourlyRate: hourlyRate,
+        credentials: additionalData.credentials,
+        status: 'pending', // Start as pending until admin verifies
+        isVerified: false,
+        practiceLocation: additionalData.practiceLocation || {},
+        practiceLocations: additionalData.practiceLocations || (additionalData.practiceLocation ? [additionalData.practiceLocation] : []),
+        // Banking details
+        bankDetails: additionalData.bankDetails ? {
+          accountName: additionalData.bankDetails.accountName,
+          bankName: additionalData.bankDetails.bankName,
+          routingNumber: additionalData.bankDetails.routingNumber,
+          accountNumber: additionalData.bankDetails.accountNumber,
+        } : {},
+        // Initialize compliance documents structure
+        complianceDocuments: {
+          // US-based fields (primary)
+          ashaCertification: additionalData.ashaCertification ? {
+            certificationNumber: additionalData.ashaCertification.certificationNumber,
+            expirationDate: additionalData.ashaCertification.expirationDate,
+            documentUrl: additionalData.ashaCertification.documentUrl,
+          } : {},
+          stateLicensure: additionalData.stateLicensure ? {
+            licenseNumber: additionalData.stateLicensure.licenseNumber,
+            state: additionalData.stateLicensure.state,
+            expirationDate: additionalData.stateLicensure.expirationDate,
+            documentUrl: additionalData.stateLicensure.documentUrl,
+          } : {},
+          stateLicensures: additionalData.stateLicensures ? additionalData.stateLicensures.map(lic => ({
+            licenseNumber: lic.licenseNumber,
+            state: lic.state,
+            expirationDate: lic.expirationDate,
+            documentUrl: lic.documentUrl
+          })) : [],
+          supervision: additionalData.supervision ? {
+            supervisingSLPName: additionalData.supervision.supervisingSLPName,
+            supervisingSLPLicenseNumber: additionalData.supervision.supervisingSLPLicenseNumber,
+            supervisingState: additionalData.supervision.supervisingState,
+            agreementDocumentUrl: additionalData.supervision.agreementDocumentUrl,
+          } : {},
+          professionalLiabilityInsurance: additionalData.professionalLiabilityInsurance ? {
+            provider: additionalData.professionalLiabilityInsurance.provider,
+            policyNumber: additionalData.professionalLiabilityInsurance.policyNumber,
+            coverageAmount: additionalData.professionalLiabilityInsurance.coverageAmount,
+            expirationDate: additionalData.professionalLiabilityInsurance.expirationDate,
+            documentUrl: additionalData.professionalLiabilityInsurance.documentUrl,
+          } : {},
+          backgroundCheck: additionalData.backgroundCheck ? {
+            clearanceNumber: additionalData.backgroundCheck.clearanceNumber,
+            state: additionalData.backgroundCheck.state,
+            expirationDate: additionalData.backgroundCheck.expirationDate,
+            documentUrl: additionalData.backgroundCheck.documentUrl,
+          } : {},
+          // Legacy fields for backward compatibility
+          spaMembership: additionalData.spaMembership ? {
+            membershipNumber: additionalData.spaMembership.membershipNumber,
+            membershipType: additionalData.spaMembership.membershipType,
+            expirationDate: additionalData.spaMembership.expirationDate,
+            documentUrl: additionalData.spaMembership.documentUrl,
+          } : {},
+          stateRegistration: additionalData.stateRegistration ? {
+            registrationNumber: additionalData.stateRegistration.registrationNumber,
+            state: additionalData.stateRegistration.state,
+            expirationDate: additionalData.stateRegistration.expirationDate,
+            documentUrl: additionalData.stateRegistration.documentUrl,
+          } : {},
+          professionalIndemnityInsurance: additionalData.professionalIndemnityInsurance ? {
+            provider: additionalData.professionalIndemnityInsurance.provider,
+            policyNumber: additionalData.professionalIndemnityInsurance.policyNumber,
+            coverageAmount: additionalData.professionalIndemnityInsurance.coverageAmount,
+            expirationDate: additionalData.professionalIndemnityInsurance.expirationDate,
+            documentUrl: additionalData.professionalIndemnityInsurance.documentUrl,
+          } : {},
+          workingWithChildrenCheck: additionalData.workingWithChildrenCheck ? {
+            checkNumber: additionalData.workingWithChildrenCheck.checkNumber,
+            state: additionalData.workingWithChildrenCheck.state,
+            expirationDate: additionalData.workingWithChildrenCheck.expirationDate,
+            documentUrl: additionalData.workingWithChildrenCheck.documentUrl,
+          } : {},
+          policeCheck: additionalData.policeCheck ? {
+            checkNumber: additionalData.policeCheck.checkNumber,
+            issueDate: additionalData.policeCheck.issueDate,
+            expirationDate: additionalData.policeCheck.expirationDate,
+            documentUrl: additionalData.policeCheck.documentUrl,
+          } : {},
+          academicQualifications: additionalData.academicQualifications || [],
+        },
+      });
+
+      // Ensure status is explicitly set to pending
+      therapist.status = 'pending'
+      therapist.isVerified = false
+      await therapist.save()
+    } else if (role === 'client') {
+      // Create client profile - NO goals or progress should be auto-generated
+      // Goals must be created by therapist AFTER diagnostic evaluation
+      // Progress tracking begins only after goals are established
+      await Client.create({
+        userId: user._id,
+        dateOfBirth: additionalData.dateOfBirth || new Date('2000-01-01'),
+        guardianName: additionalData.guardianName,
+        guardianRelation: additionalData.guardianRelation,
       });
     }
-
-    // Validate required fields for Australia
-    if (!additionalData.licenseNumber && !additionalData.spaMembershipNumber) {
+  } catch (error) {
+    // Rollback User creation if Profile creation fails
+    await User.findByIdAndDelete(user._id);
+    if (error.message.startsWith('VALIDATION:')) {
       return res.status(400).json({
         success: false,
-        message: 'License number or SPA membership number is required',
+        message: error.message.replace('VALIDATION:', ''),
       });
     }
-
-    // Get rate caps for validation
-    const { getRateCapsForUse } = require('./pricingController');
-    const rateCaps = getRateCapsForUse();
-    const maxRate = rateCaps[additionalData.credentials] || rateCaps.SLP;
-    const hourlyRate = additionalData.hourlyRate || (additionalData.credentials === 'SLP' ? 75 : 55);
-
-    if (hourlyRate > maxRate) {
-      return res.status(400).json({
-        success: false,
-        message: `Hourly rate for ${additionalData.credentials} cannot exceed $${maxRate}/hour`,
-      });
-    }
-
-    // Create therapist with pending status (requires admin verification)
-    const therapist = await Therapist.create({
-      userId: user._id,
-      licenseNumber: additionalData.licenseNumber || additionalData.spaMembershipNumber || 'TEMP-' + Date.now(),
-      licensedStates: additionalData.stateLicensures
-        ? [...new Set(additionalData.stateLicensures.map(l => l.state))]
-        : (additionalData.licensedStates || []),
-      specializations: additionalData.specializations || [],
-      hourlyRate: hourlyRate,
-      credentials: additionalData.credentials,
-      status: 'pending', // Start as pending until admin verifies
-      isVerified: false,
-      practiceLocation: additionalData.practiceLocation || {},
-      // Banking details
-      bankDetails: additionalData.bankDetails ? {
-        accountName: additionalData.bankDetails.accountName,
-        bankName: additionalData.bankDetails.bankName,
-        routingNumber: additionalData.bankDetails.routingNumber,
-        accountNumber: additionalData.bankDetails.accountNumber,
-      } : {},
-      // Initialize compliance documents structure
-      complianceDocuments: {
-        // US-based fields (primary)
-        ashaCertification: additionalData.ashaCertification ? {
-          certificationNumber: additionalData.ashaCertification.certificationNumber,
-          expirationDate: additionalData.ashaCertification.expirationDate,
-          documentUrl: additionalData.ashaCertification.documentUrl,
-        } : {},
-        stateLicensure: additionalData.stateLicensure ? {
-          licenseNumber: additionalData.stateLicensure.licenseNumber,
-          state: additionalData.stateLicensure.state,
-          expirationDate: additionalData.stateLicensure.expirationDate,
-          documentUrl: additionalData.stateLicensure.documentUrl,
-        } : {},
-        stateLicensures: additionalData.stateLicensures ? additionalData.stateLicensures.map(lic => ({
-          licenseNumber: lic.licenseNumber,
-          state: lic.state,
-          expirationDate: lic.expirationDate,
-          documentUrl: lic.documentUrl
-        })) : [],
-        supervision: additionalData.supervision ? {
-          supervisingSLPName: additionalData.supervision.supervisingSLPName,
-          supervisingSLPLicenseNumber: additionalData.supervision.supervisingSLPLicenseNumber,
-          supervisingState: additionalData.supervision.supervisingState,
-          agreementDocumentUrl: additionalData.supervision.agreementDocumentUrl,
-        } : {},
-        professionalLiabilityInsurance: additionalData.professionalLiabilityInsurance ? {
-          provider: additionalData.professionalLiabilityInsurance.provider,
-          policyNumber: additionalData.professionalLiabilityInsurance.policyNumber,
-          coverageAmount: additionalData.professionalLiabilityInsurance.coverageAmount,
-          expirationDate: additionalData.professionalLiabilityInsurance.expirationDate,
-          documentUrl: additionalData.professionalLiabilityInsurance.documentUrl,
-        } : {},
-        backgroundCheck: additionalData.backgroundCheck ? {
-          clearanceNumber: additionalData.backgroundCheck.clearanceNumber,
-          state: additionalData.backgroundCheck.state,
-          expirationDate: additionalData.backgroundCheck.expirationDate,
-          documentUrl: additionalData.backgroundCheck.documentUrl,
-        } : {},
-        // Legacy fields for backward compatibility
-        spaMembership: additionalData.spaMembership ? {
-          membershipNumber: additionalData.spaMembership.membershipNumber,
-          membershipType: additionalData.spaMembership.membershipType,
-          expirationDate: additionalData.spaMembership.expirationDate,
-          documentUrl: additionalData.spaMembership.documentUrl,
-        } : {},
-        stateRegistration: additionalData.stateRegistration ? {
-          registrationNumber: additionalData.stateRegistration.registrationNumber,
-          state: additionalData.stateRegistration.state,
-          expirationDate: additionalData.stateRegistration.expirationDate,
-          documentUrl: additionalData.stateRegistration.documentUrl,
-        } : {},
-        professionalIndemnityInsurance: additionalData.professionalIndemnityInsurance ? {
-          provider: additionalData.professionalIndemnityInsurance.provider,
-          policyNumber: additionalData.professionalIndemnityInsurance.policyNumber,
-          coverageAmount: additionalData.professionalIndemnityInsurance.coverageAmount,
-          expirationDate: additionalData.professionalIndemnityInsurance.expirationDate,
-          documentUrl: additionalData.professionalIndemnityInsurance.documentUrl,
-        } : {},
-        workingWithChildrenCheck: additionalData.workingWithChildrenCheck ? {
-          checkNumber: additionalData.workingWithChildrenCheck.checkNumber,
-          state: additionalData.workingWithChildrenCheck.state,
-          expirationDate: additionalData.workingWithChildrenCheck.expirationDate,
-          documentUrl: additionalData.workingWithChildrenCheck.documentUrl,
-        } : {},
-        policeCheck: additionalData.policeCheck ? {
-          checkNumber: additionalData.policeCheck.checkNumber,
-          issueDate: additionalData.policeCheck.issueDate,
-          expirationDate: additionalData.policeCheck.expirationDate,
-          documentUrl: additionalData.policeCheck.documentUrl,
-        } : {},
-        academicQualifications: additionalData.academicQualifications || [],
-      },
-    });
-
-    // Ensure status is explicitly set to pending
-    therapist.status = 'pending'
-    therapist.isVerified = false
-    await therapist.save()
-  } else if (role === 'client') {
-    // Create client profile - NO goals or progress should be auto-generated
-    // Goals must be created by therapist AFTER diagnostic evaluation
-    // Progress tracking begins only after goals are established
-    await Client.create({
-      userId: user._id,
-      dateOfBirth: additionalData.dateOfBirth || new Date('2000-01-01'),
-      guardianName: additionalData.guardianName,
-      guardianRelation: additionalData.guardianRelation,
-    });
+    throw error;
   }
 
   // Generate tokens

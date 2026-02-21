@@ -19,7 +19,15 @@ const notificationSchema = new mongoose.Schema({
       'assignment',
       'goal-completed',
       'forum-reply',
-      'general'
+      'general',
+      'evaluation-booked',
+      'evaluation-therapist-assigned',
+      'evaluation-review-started',
+      'evaluation-therapist-ready',
+      'evaluation-meeting-reminder',
+      'evaluation-completed',
+      'evaluation-recommendations',
+      'subscription-credit-applied'
     ],
     required: true,
   },

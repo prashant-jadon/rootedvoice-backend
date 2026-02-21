@@ -37,7 +37,7 @@ app.use(cors({
   origin: function (origin, callback) {
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
-    
+
     if (allowedOrigins.indexOf(origin) !== -1) {
       callback(null, true);
     } else {
@@ -116,11 +116,11 @@ if (process.env.VERCEL !== '1' && !process.env.VERCEL_ENV) {
     const { sendSessionReminders } = require('./utils/sessionReminder');
     const { initTwilio } = require('./utils/smsService');
     const { initWebPush } = require('./utils/pushNotificationService');
-    
+
     // Initialize SMS and Push services
     initTwilio();
     initWebPush();
-    
+
     // Run every 15 minutes to check for reminders
     // This ensures we catch sessions at the right time for 45-minute reminders
     cron.schedule('*/15 * * * *', async () => {
@@ -130,7 +130,7 @@ if (process.env.VERCEL !== '1' && !process.env.VERCEL_ENV) {
         console.error('Error in scheduled reminder job:', error);
       }
     });
-    
+
     // Run once on startup (after 10 seconds to allow DB connection)
     setTimeout(async () => {
       try {
@@ -139,9 +139,13 @@ if (process.env.VERCEL !== '1' && !process.env.VERCEL_ENV) {
         console.error('Error in startup reminder check:', error);
       }
     }, 10000);
-    
+
     console.log('✅ Session reminder service initialized (runs every 15 minutes)');
   }
+
+  // Initialize evaluation cron jobs (review deadlines, reminders, rollovers)
+  const { initCronJobs } = require('./utils/cronJobs');
+  initCronJobs();
 
   // Handle unhandled promise rejections
   process.on('unhandledRejection', (err, promise) => {

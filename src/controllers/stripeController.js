@@ -5,8 +5,11 @@ const Session = require('../models/Session');
 const Client = require('../models/Client');
 const Therapist = require('../models/Therapist');
 const Evaluation = require('../models/Evaluation');
+const Notification = require('../models/Notification');
+const User = require('../models/User');
 const { asyncHandler } = require('../middlewares/errorHandler');
 const { getPricingTiersForSubscription, getPaymentSplitForUse, getCancellationFee } = require('./pricingController');
+const { sendEmail, emailTemplates } = require('../utils/emailService');
 
 // @desc    Create Stripe checkout session
 // @route   POST /api/stripe/create-checkout-session
@@ -34,27 +37,29 @@ const createCheckoutSession = asyncHandler(async (req, res) => {
   if (existingSubscription) {
     return res.status(400).json({
       success: false,
-      message: 'You already have an active subscription',
+      message: 'You already have an active subscription. Use the upgrade flow instead.',
     });
   }
 
-  // Check if client has already paid evaluation fee
   const client = await Client.findOne({ userId });
   const hasPaidEvaluation = client?.hasPaidEvaluationFee || false;
 
-  // Create Stripe checkout session
+  // Calculate pricing with evaluation credit
   const isPayAsYouGo = tierInfo.billingCycle === 'pay-as-you-go';
 
-  // Build price_data object conditionally
-  let unitAmount = tierInfo.price * 100; // Default price
+  let unitAmount = tierInfo.price * 100; // Default price in cents
   let description = `${tierInfo.sessionsPerMonth} sessions per month`;
+  let evaluationCreditAmount = 0;
 
   // BLOOM LOGIC: If Bloom tier AND hasn't paid eval fee, charge the Evaluation Price ($195)
-  // The monthly/session price ($125) will be charged when they book later
-  // This initial payment sets them up as a "Bloom" client with eval paid
   if (tier === 'bloom' && !hasPaidEvaluation) {
     unitAmount = (tierInfo.evaluationPrice || 195) * 100;
     description = 'Initial Evaluation Fee + Bloom Access';
+  } else if (client?.evaluationCredit?.status === 'available' && client.evaluationCredit.amount > 0) {
+    // Apply $195 evaluation credit to subscription price
+    evaluationCreditAmount = Math.min(client.evaluationCredit.amount * 100, unitAmount);
+    unitAmount = Math.max(unitAmount - evaluationCreditAmount, 50); // Stripe minimum is $0.50
+    description += ` (includes $${(evaluationCreditAmount / 100).toFixed(0)} evaluation credit)`;
   }
 
   const priceData = {
@@ -66,17 +71,14 @@ const createCheckoutSession = asyncHandler(async (req, res) => {
     unit_amount: unitAmount,
   };
 
-  // Only add recurring for subscription mode (not pay-as-you-go or one-time)
-  // Bloom is "pay-as-you-go" so it will be ONE-TIME payment here for the Eval Fee
   const isBloomInitial = tier === 'bloom' && !hasPaidEvaluation;
-
   const isOneTime = tierInfo.billingCycle === 'one-time' ||
     isBloomInitial ||
     tierInfo.billingCycle === 'pay-as-you-go';
 
   if (!isOneTime) {
     priceData.recurring = {
-      interval: tierInfo.billingCycle === 'every-4-weeks' ? 'month' : 'month',
+      interval: 'month',
       interval_count: tierInfo.billingCycle === 'every-4-weeks' ? 1 : 1,
     };
   }
@@ -89,7 +91,8 @@ const createCheckoutSession = asyncHandler(async (req, res) => {
     isBloomInitial,
     isOneTime,
     mode: sessionMode,
-    unitAmount
+    unitAmount,
+    evaluationCreditAmount,
   });
 
   const session = await stripe.checkout.sessions.create({
@@ -107,6 +110,8 @@ const createCheckoutSession = asyncHandler(async (req, res) => {
     metadata: {
       tier,
       userId: userId.toString(),
+      evaluationCreditApplied: (evaluationCreditAmount / 100).toString(),
+      type: 'subscription',
     },
   });
 
@@ -115,6 +120,232 @@ const createCheckoutSession = asyncHandler(async (req, res) => {
     data: {
       sessionId: session.id,
       url: session.url,
+      evaluationCreditApplied: evaluationCreditAmount / 100,
+    },
+  });
+});
+
+// @desc    Create Stripe checkout session for $195 evaluation fee
+// @route   POST /api/stripe/create-evaluation-checkout
+// @access  Private
+const createEvaluationCheckout = asyncHandler(async (req, res) => {
+  const { evaluationId } = req.body;
+  const userId = req.user._id;
+
+  if (!evaluationId) {
+    return res.status(400).json({
+      success: false,
+      message: 'Evaluation ID is required',
+    });
+  }
+
+  // Verify evaluation exists and belongs to user
+  const evaluation = await Evaluation.findOne({
+    _id: evaluationId,
+    clientId: userId,
+    status: 'pending_payment',
+  });
+
+  if (!evaluation) {
+    return res.status(404).json({
+      success: false,
+      message: 'Evaluation not found or already paid',
+    });
+  }
+
+  const amount = evaluation.amountPaid || 195;
+
+  const session = await stripe.checkout.sessions.create({
+    payment_method_types: ['card'],
+    line_items: [
+      {
+        price_data: {
+          currency: 'usd',
+          product_data: {
+            name: 'Diagnostic Evaluation',
+            description: '60-minute diagnostic evaluation with a licensed SLP. This fee will be credited toward your subscription purchase.',
+          },
+          unit_amount: amount * 100,
+        },
+        quantity: 1,
+      },
+    ],
+    mode: 'payment',
+    success_url: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/evaluation-booking?payment_success=true&evaluation_id=${evaluationId}&session_id={CHECKOUT_SESSION_ID}`,
+    cancel_url: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/evaluation-booking?canceled=true`,
+    client_reference_id: userId.toString(),
+    metadata: {
+      type: 'evaluation_payment',
+      evaluationId: evaluationId.toString(),
+      userId: userId.toString(),
+      amount: amount.toString(),
+    },
+  });
+
+  res.json({
+    success: true,
+    data: {
+      sessionId: session.id,
+      url: session.url,
+    },
+  });
+});
+
+// @desc    Verify evaluation payment
+// @route   POST /api/stripe/verify-evaluation-payment
+// @access  Private
+const verifyEvaluationPayment = asyncHandler(async (req, res) => {
+  const { sessionId, evaluationId } = req.body;
+  const userId = req.user._id;
+
+  if (!sessionId || !evaluationId) {
+    return res.status(400).json({
+      success: false,
+      message: 'Session ID and evaluation ID are required',
+    });
+  }
+
+  // Retrieve checkout session from Stripe
+  const stripeSession = await stripe.checkout.sessions.retrieve(sessionId);
+
+  if (!stripeSession || stripeSession.payment_status !== 'paid') {
+    return res.status(400).json({
+      success: false,
+      message: 'Payment not completed',
+    });
+  }
+
+  // Verify this belongs to the current user
+  if (stripeSession.metadata.userId !== userId.toString()) {
+    return res.status(403).json({
+      success: false,
+      message: 'This payment does not belong to you',
+    });
+  }
+
+  // Update evaluation status
+  const evaluation = await Evaluation.findOne({
+    _id: evaluationId,
+    clientId: userId,
+  });
+
+  if (!evaluation) {
+    return res.status(404).json({
+      success: false,
+      message: 'Evaluation not found',
+    });
+  }
+
+  if (evaluation.status !== 'pending_payment') {
+    return res.json({
+      success: true,
+      message: 'Payment already processed',
+      data: evaluation,
+    });
+  }
+
+  evaluation.status = 'paid';
+  evaluation.stripeCheckoutSessionId = sessionId;
+  evaluation.stripePaymentIntentId = stripeSession.payment_intent;
+  await evaluation.save();
+
+  // Set $195 evaluation credit on client
+  const client = await Client.findOne({ userId });
+  if (client) {
+    client.evaluationCredit = {
+      amount: 195,
+      evaluationId: evaluation._id,
+      status: 'available',
+    };
+    client.hasPaidEvaluationFee = true;
+    await client.save();
+  }
+
+  res.json({
+    success: true,
+    message: 'Evaluation payment verified. You can now select a therapist.',
+    data: evaluation,
+  });
+});
+
+// @desc    Create Stripe checkout session for subscription upgrade
+// @route   POST /api/stripe/create-upgrade-checkout
+// @access  Private
+const createUpgradeCheckout = asyncHandler(async (req, res) => {
+  const { newTier } = req.body;
+  const userId = req.user._id;
+
+  const PRICING_TIERS = await getPricingTiersForSubscription();
+  const newTierInfo = PRICING_TIERS[newTier];
+
+  if (!newTierInfo) {
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid pricing tier',
+    });
+  }
+
+  // Get current subscription
+  const currentSub = await Subscription.findOne({ userId, status: 'active' });
+  if (!currentSub) {
+    return res.status(400).json({
+      success: false,
+      message: 'No active subscription to upgrade from. Please subscribe first.',
+    });
+  }
+
+  // Calculate upgrade price
+  let upgradePrice = newTierInfo.price;
+
+  // Apply $195 evaluation credit to the upgraded package price
+  const client = await Client.findOne({ userId });
+  let evaluationCreditAmount = 0;
+  if (client?.evaluationCredit?.status === 'available' && client.evaluationCredit.amount > 0) {
+    evaluationCreditAmount = client.evaluationCredit.amount;
+    upgradePrice = Math.max(upgradePrice - evaluationCreditAmount, 0.50); // Stripe minimum
+  }
+
+  const unitAmount = Math.round(upgradePrice * 100);
+  let description = `Upgrade to ${newTierInfo.name}`;
+  if (evaluationCreditAmount > 0) {
+    description += ` ($${evaluationCreditAmount} evaluation credit applied)`;
+  }
+
+  const session = await stripe.checkout.sessions.create({
+    payment_method_types: ['card'],
+    line_items: [
+      {
+        price_data: {
+          currency: 'usd',
+          product_data: {
+            name: `Upgrade to ${newTierInfo.name}`,
+            description,
+          },
+          unit_amount: unitAmount,
+        },
+        quantity: 1,
+      },
+    ],
+    mode: 'payment',
+    success_url: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/pricing?upgrade_success=true`,
+    cancel_url: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/pricing?canceled=true`,
+    client_reference_id: userId.toString(),
+    metadata: {
+      type: 'subscription_upgrade',
+      tier: newTier,
+      userId: userId.toString(),
+      previousSubscriptionId: currentSub._id.toString(),
+      evaluationCreditApplied: evaluationCreditAmount.toString(),
+    },
+  });
+
+  res.json({
+    success: true,
+    data: {
+      sessionId: session.id,
+      url: session.url,
+      upgradePrice,
+      evaluationCreditApplied: evaluationCreditAmount,
     },
   });
 });
@@ -559,14 +790,26 @@ const handleWebhook = asyncHandler(async (req, res) => {
 
 // Helper: Handle checkout session completed
 async function handleCheckoutCompleted(session) {
+  const type = session.metadata.type || 'subscription';
   const userId = session.metadata.userId;
-  const tier = session.metadata.tier;
 
+  // Handle evaluation payment
+  if (type === 'evaluation_payment') {
+    await handleEvaluationPaymentWebhook(session);
+    return;
+  }
+
+  // Handle subscription upgrade
+  if (type === 'subscription_upgrade') {
+    await handleSubscriptionUpgradeWebhook(session);
+    return;
+  }
+
+  const tier = session.metadata.tier;
   if (!userId || !tier) return;
 
   const PRICING_TIERS = await getPricingTiersForSubscription();
   const tierInfo = PRICING_TIERS[tier];
-
   if (!tierInfo) return;
 
   // Cancel existing subscription
@@ -575,7 +818,6 @@ async function handleCheckoutCompleted(session) {
     { status: 'cancelled', cancelledAt: new Date() }
   );
 
-  // Create new subscription
   const startDate = new Date();
   let nextBillingDate = new Date();
 
@@ -587,26 +829,12 @@ async function handleCheckoutCompleted(session) {
     nextBillingDate = null;
   }
 
-  // Create evaluation record using userId (Evaluation.clientId refs User model)
-  const existingEval = await Evaluation.findOne({ clientId: userId });
-  if (!existingEval) {
-    await Evaluation.create({
-      clientId: userId, // userId = User._id (Evaluation model refs User)
-      status: 'pending_creation',
-      questions: []
-    });
-    console.log(`✅ Evaluation record created for user ${userId}`);
-  }
+  // Apply evaluation credit if available
+  const evaluationCreditApplied = parseFloat(session.metadata.evaluationCreditApplied || '0');
+  const client = await Client.findOne({ userId });
 
-  // Update client's paid evaluation status if Bloom tier
-  if (tier === 'bloom') {
-    await Client.findOneAndUpdate(
-      { userId },
-      { hasPaidEvaluationFee: true }
-    );
-  }
-
-  await Subscription.create({
+  // Create subscription with credit tracking
+  const subscription = await Subscription.create({
     userId,
     tier,
     tierName: tierInfo.name,
@@ -620,7 +848,143 @@ async function handleCheckoutCompleted(session) {
     stripeSubscriptionId: session.subscription || null,
     stripeCustomerId: session.customer || null,
     autoRenew: true,
+    evaluationCreditApplied: evaluationCreditApplied > 0 ? {
+      amount: evaluationCreditApplied,
+      evaluationId: client?.evaluationCredit?.evaluationId || null,
+    } : undefined,
   });
+
+  // Mark evaluation credit as applied
+  if (evaluationCreditApplied > 0 && client) {
+    client.evaluationCredit.status = 'applied';
+    client.evaluationCredit.appliedToSubscriptionId = subscription._id;
+    client.evaluationCredit.appliedAt = new Date();
+    await client.save();
+
+    // Send credit applied notification email
+    const user = await User.findById(userId);
+    if (user) {
+      const creditEmail = emailTemplates.subscriptionCreditApplied(
+        user.firstName,
+        evaluationCreditApplied,
+        tierInfo.name,
+        (tierInfo.price - evaluationCreditApplied).toFixed(2)
+      );
+      await sendEmail({
+        to: user.email,
+        subject: creditEmail.subject,
+        html: creditEmail.html,
+      });
+
+      await Notification.create({
+        userId,
+        type: 'subscription-credit-applied',
+        title: 'Evaluation Credit Applied!',
+        message: `Your $${evaluationCreditApplied} evaluation credit has been applied to your ${tierInfo.name} subscription.`,
+        link: '/client-dashboard',
+      });
+    }
+  }
+
+  // Update client's paid evaluation status if Bloom tier
+  if (tier === 'bloom' && client) {
+    client.hasPaidEvaluationFee = true;
+    await client.save();
+  }
+}
+
+// Helper: Handle evaluation payment webhook
+async function handleEvaluationPaymentWebhook(session) {
+  const { evaluationId, userId } = session.metadata;
+  if (!evaluationId || !userId) return;
+
+  const evaluation = await Evaluation.findById(evaluationId);
+  if (!evaluation || evaluation.status !== 'pending_payment') return;
+
+  evaluation.status = 'paid';
+  evaluation.stripeCheckoutSessionId = session.id;
+  evaluation.stripePaymentIntentId = session.payment_intent;
+  await evaluation.save();
+
+  // Set $195 credit
+  const client = await Client.findOne({ userId });
+  if (client) {
+    client.evaluationCredit = {
+      amount: 195,
+      evaluationId: evaluation._id,
+      status: 'available',
+    };
+    client.hasPaidEvaluationFee = true;
+    await client.save();
+  }
+
+  console.log(`✅ Evaluation ${evaluationId} payment processed for user ${userId}`);
+}
+
+// Helper: Handle subscription upgrade webhook
+async function handleSubscriptionUpgradeWebhook(session) {
+  const { tier: newTier, userId, previousSubscriptionId, evaluationCreditApplied } = session.metadata;
+  if (!newTier || !userId) return;
+
+  const PRICING_TIERS = await getPricingTiersForSubscription();
+  const tierInfo = PRICING_TIERS[newTier];
+  if (!tierInfo) return;
+
+  // Cancel previous subscription
+  if (previousSubscriptionId) {
+    await Subscription.findByIdAndUpdate(previousSubscriptionId, {
+      status: 'cancelled',
+      cancelledAt: new Date(),
+    });
+  }
+
+  const startDate = new Date();
+  let nextBillingDate = new Date();
+  if (tierInfo.billingCycle === 'every-4-weeks') {
+    nextBillingDate.setDate(nextBillingDate.getDate() + 28);
+  } else if (tierInfo.billingCycle === 'monthly') {
+    nextBillingDate.setMonth(nextBillingDate.getMonth() + 1);
+  } else {
+    nextBillingDate = null;
+  }
+
+  const creditAmount = parseFloat(evaluationCreditApplied || '0');
+
+  const subscription = await Subscription.create({
+    userId,
+    tier: newTier,
+    tierName: tierInfo.name,
+    price: tierInfo.price,
+    billingCycle: tierInfo.billingCycle,
+    sessionsPerMonth: tierInfo.sessionsPerMonth,
+    status: 'active',
+    startDate,
+    nextBillingDate,
+    features: tierInfo.features,
+    stripeSubscriptionId: session.subscription || null,
+    stripeCustomerId: session.customer || null,
+    autoRenew: true,
+    upgradedFrom: previousSubscriptionId ? {
+      subscriptionId: previousSubscriptionId,
+      creditAmount: creditAmount,
+    } : undefined,
+    evaluationCreditApplied: creditAmount > 0 ? {
+      amount: creditAmount,
+    } : undefined,
+  });
+
+  // Mark evaluation credit as applied
+  if (creditAmount > 0) {
+    const client = await Client.findOne({ userId });
+    if (client) {
+      client.evaluationCredit.status = 'applied';
+      client.evaluationCredit.appliedToSubscriptionId = subscription._id;
+      client.evaluationCredit.appliedAt = new Date();
+      await client.save();
+    }
+  }
+
+  console.log(`✅ Subscription upgraded to ${newTier} for user ${userId}`);
 }
 
 // Helper: Handle payment succeeded
@@ -1117,6 +1481,9 @@ const verifySessionPayment = asyncHandler(async (req, res) => {
 
 module.exports = {
   createCheckoutSession,
+  createEvaluationCheckout,
+  verifyEvaluationPayment,
+  createUpgradeCheckout,
   createPaymentIntent,
   createCancellationPayment,
   confirmPayment,

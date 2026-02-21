@@ -22,6 +22,12 @@ const therapistSchema = new mongoose.Schema({
     city: String,
     postcode: String,
   },
+  // SUPPORT FOR MULTIPLE PRACTICE LOCATIONS
+  practiceLocations: [{
+    state: { type: String, required: true },
+    city: { type: String, required: true },
+    postcode: { type: String, required: true },
+  }],
   specializations: [{
     type: String,
     enum: [

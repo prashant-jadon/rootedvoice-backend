@@ -1341,64 +1341,77 @@ const getIncompleteTherapistProfiles = asyncHandler(async (req, res) => {
 
   const incompleteProfiles = therapists.map(therapist => {
     const missingItems = [];
+    const isSLP = therapist.credentials === 'SLP';
+    const isSLPA = therapist.credentials === 'SLPA';
 
-    // Check Australia-specific documents
-    if (!therapist.complianceDocuments?.spaMembership?.membershipNumber) {
-      missingItems.push('SPA Membership Number');
-    }
-    if (!therapist.complianceDocuments?.spaMembership?.verified) {
-      missingItems.push('SPA Membership Verification');
-    }
-    if (!therapist.complianceDocuments?.stateRegistration?.registrationNumber) {
-      missingItems.push('State Registration Number');
-    }
-    if (!therapist.complianceDocuments?.stateRegistration?.verified) {
-      missingItems.push('State Registration Verification');
-    }
-    if (!therapist.complianceDocuments?.professionalIndemnityInsurance?.policyNumber) {
-      missingItems.push('Professional Indemnity Insurance Policy Number');
-    }
-    if (!therapist.complianceDocuments?.professionalIndemnityInsurance?.verified) {
-      missingItems.push('Professional Indemnity Insurance Verification');
-    }
-    if (!therapist.complianceDocuments?.workingWithChildrenCheck?.checkNumber) {
-      missingItems.push('Working with Children Check Number');
-    }
-    if (!therapist.complianceDocuments?.workingWithChildrenCheck?.verified) {
-      missingItems.push('Working with Children Check Verification');
-    }
-    if (!therapist.complianceDocuments?.policeCheck?.checkNumber) {
-      missingItems.push('Police Check Number');
-    }
-    if (!therapist.complianceDocuments?.policeCheck?.verified) {
-      missingItems.push('Police Check Verification');
+    // Check US-based documents first (role-specific)
+    const hasAsha = !!therapist.complianceDocuments?.ashaCertification?.certificationNumber;
+    const isAshaVerified = !!therapist.complianceDocuments?.ashaCertification?.verified;
+
+    const stateLicensures = therapist.complianceDocuments?.stateLicensures || [];
+    const hasStateLicense = stateLicensures.length > 0 || !!therapist.complianceDocuments?.stateLicensure?.licenseNumber;
+    const isStateLicenseVerified = stateLicensures.some(l => l.verified) || !!therapist.complianceDocuments?.stateLicensure?.verified;
+
+    const hasLiability = !!therapist.complianceDocuments?.professionalLiabilityInsurance?.policyNumber;
+    const isLiabilityVerified = !!therapist.complianceDocuments?.professionalLiabilityInsurance?.verified;
+
+    const hasBackground = !!therapist.complianceDocuments?.backgroundCheck?.clearanceNumber;
+    const isBackgroundVerified = !!therapist.complianceDocuments?.backgroundCheck?.verified;
+
+    const hasSupervision = !!therapist.complianceDocuments?.supervision?.supervisingSLPName;
+    const isSupervisionVerified = !!therapist.complianceDocuments?.supervision?.verified;
+
+    // Check Legacy Australia/US documents
+    const hasLegacySpa = !!therapist.complianceDocuments?.spaMembership?.membershipNumber;
+    const isLegacySpaVerified = !!therapist.complianceDocuments?.spaMembership?.verified;
+
+    // If they have legacy SPA, check legacy. Otherwise, check new structure.
+    if (hasLegacySpa) {
+      if (!hasLegacySpa) missingItems.push('SPA Membership Number');
+      if (!isLegacySpaVerified) missingItems.push('SPA Membership Verification');
+
+      if (!therapist.complianceDocuments?.stateRegistration?.registrationNumber) missingItems.push('State Registration Number');
+      if (!therapist.complianceDocuments?.stateRegistration?.verified) missingItems.push('State Registration Verification');
+
+      if (!therapist.complianceDocuments?.professionalIndemnityInsurance?.policyNumber) missingItems.push('Professional Indemnity Insurance Policy Number');
+      if (!therapist.complianceDocuments?.professionalIndemnityInsurance?.verified) missingItems.push('Professional Indemnity Insurance Verification');
+
+      if (!therapist.complianceDocuments?.workingWithChildrenCheck?.checkNumber) missingItems.push('Working with Children Check Number');
+      if (!therapist.complianceDocuments?.workingWithChildrenCheck?.verified) missingItems.push('Working with Children Check Verification');
+
+      if (!therapist.complianceDocuments?.policeCheck?.checkNumber) missingItems.push('Police Check Number');
+      if (!therapist.complianceDocuments?.policeCheck?.verified) missingItems.push('Police Check Verification');
+    } else {
+      // US Compliance Logic
+      if (isSLP) {
+        if (!hasAsha) missingItems.push('ASHA Certification');
+        if (hasAsha && !isAshaVerified) missingItems.push('ASHA Certification Verification');
+      }
+
+      if (!hasStateLicense) missingItems.push('State Licensure');
+      if (hasStateLicense && !isStateLicenseVerified) missingItems.push('State Licensure Verification');
+
+      if (!hasLiability && !therapist.complianceDocuments?.liabilityInsurance?.policyNumber) missingItems.push('Professional Liability Insurance');
+      if ((hasLiability && !isLiabilityVerified) || (therapist.complianceDocuments?.liabilityInsurance?.policyNumber && !therapist.complianceDocuments?.liabilityInsurance?.verified)) missingItems.push('Professional Liability Insurance Verification');
+
+      if (!hasBackground) missingItems.push('Background Check (Fingerprinting/Police Check)');
+      if (hasBackground && !isBackgroundVerified) missingItems.push('Background Check Verification');
+
+      if (isSLPA) {
+        if (!hasSupervision) missingItems.push('Supervision Agreement');
+        if (hasSupervision && !isSupervisionVerified) missingItems.push('Supervision Agreement Verification');
+      }
     }
 
-    // Legacy documents (for backward compatibility - only check if Australia docs don't exist)
-    if (!therapist.complianceDocuments?.spaMembership?.membershipNumber) {
-      if (!therapist.complianceDocuments?.stateLicense?.number) {
-        missingItems.push('State License Number (Legacy)');
-      }
-      if (!therapist.complianceDocuments?.stateLicense?.verified) {
-        missingItems.push('State License Verification (Legacy)');
-      }
-    }
-    if (!therapist.complianceDocuments?.professionalIndemnityInsurance?.policyNumber) {
-      if (!therapist.complianceDocuments?.liabilityInsurance?.policyNumber) {
-        missingItems.push('Liability Insurance Policy Number (Legacy)');
-      }
-      if (!therapist.complianceDocuments?.liabilityInsurance?.verified) {
-        missingItems.push('Liability Insurance Verification (Legacy)');
-      }
-    }
     if (!therapist.hourlyRate) {
       missingItems.push('Hourly Rate');
     }
     if (!therapist.specializations || therapist.specializations.length === 0) {
       missingItems.push('Specializations');
     }
-    if (!therapist.availability || therapist.availability.length === 0) {
-      missingItems.push('Availability');
+    // Practice locations requirement (previously availability)
+    if ((!therapist.practiceLocations || therapist.practiceLocations.length === 0) && (!therapist.practiceLocation || !therapist.practiceLocation.state)) {
+      missingItems.push('Practice Locations');
     }
 
     return {

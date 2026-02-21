@@ -210,8 +210,50 @@ const clientSchema = new mongoose.Schema({
       maxlength: 2000,
     },
   },
-  // Flag to track if client has paid the initial evaluation fee
-  // Required for Bloom/Pay-as-you-go clients before booking
+  // Evaluation credit tracking ($195 credit system)
+  evaluationCredit: {
+    amount: {
+      type: Number,
+      default: 0, // $195 when evaluation is paid
+    },
+    evaluationId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Evaluation',
+    },
+    appliedToSubscriptionId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Subscription',
+    },
+    status: {
+      type: String,
+      enum: ['none', 'available', 'applied', 'expired'],
+      default: 'none',
+    },
+    appliedAt: Date,
+  },
+  // Therapist recommendations after evaluation
+  recommendations: {
+    tier: String,
+    notes: String,
+    resourceIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Resource' }],
+    recommendedAt: Date,
+    recommendedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  },
+  // Session rollover tracking
+  rolloverSessions: {
+    count: {
+      type: Number,
+      default: 0,
+    },
+    fromMonth: Date,
+    expiresAt: Date,
+  },
+  // Flag to track if client has completed evaluation
+  hasCompletedEvaluation: {
+    type: Boolean,
+    default: false,
+  },
+  // Legacy - keep backward compatibility
   hasPaidEvaluationFee: {
     type: Boolean,
     default: false,
