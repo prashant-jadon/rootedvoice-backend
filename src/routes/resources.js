@@ -1,7 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const { protect, optionalAuth } = require('../middlewares/auth');
-const { isTherapist } = require('../middlewares/roleCheck');
+const { authorize, isAdmin } = require('../middlewares/roleCheck');
+const upload = require('../config/multer');
 const {
   getResources,
   getResource,
@@ -9,6 +10,7 @@ const {
   updateResource,
   deleteResource,
   aiSearchResources,
+  approveResource,
 } = require('../controllers/resourceController');
 
 // Public routes (optional auth for access level filtering)
@@ -18,11 +20,14 @@ router.get('/:id', optionalAuth, getResource);
 
 // Protected routes
 router.use(protect);
-router.use(isTherapist);
+router.use(authorize('therapist', 'admin'));
 
-router.post('/', createResource);
-router.put('/:id', updateResource);
+router.post('/', upload.single('resource'), createResource);
+router.put('/:id', upload.single('resource'), updateResource);
 router.delete('/:id', deleteResource);
+
+// Admin-only route
+router.put('/:id/approve', isAdmin, approveResource);
 
 module.exports = router;
 

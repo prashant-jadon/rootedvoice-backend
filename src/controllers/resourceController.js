@@ -1,17 +1,29 @@
 const Resource = require('../models/Resource');
 const Therapist = require('../models/Therapist');
+const User = require('../models/User'); // Import User
 const { asyncHandler } = require('../middlewares/errorHandler');
 
 // @desc    Get all resources
 // @route   GET /api/resources
 // @access  Public (with access level filtering)
 const getResources = asyncHandler(async (req, res) => {
-  const { category, ageGroup, disorderType, search, page = 1, limit = 20 } = req.query;
+  const { category, ageGroup, disorderType, search, page = 1, limit = 20, isApproved = true } = req.query;
 
   const filter = {
-    isApproved: true,
     isPublic: true,
   };
+
+  if (isApproved !== 'all') {
+    filter.isApproved = isApproved === 'false' ? false : true;
+  }
+
+  // Admin can see unapproved and non-public resources
+  if (req.user && req.user.role === 'admin') {
+    delete filter.isApproved;
+    delete filter.isPublic;
+    if (isApproved === 'false') filter.isApproved = false;
+    else if (isApproved === 'true') filter.isApproved = true;
+  }
 
   // Get user's credentials if authenticated
   let userCredentials = null;
@@ -29,8 +41,8 @@ const getResources = asyncHandler(async (req, res) => {
       { accessLevel: 'SLPA' },
       { accessLevel: 'public' },
     ];
-  } else if (userCredentials === 'SLP') {
-    // SLP can access all resources
+  } else if (userCredentials === 'SLP' || (req.user && req.user.role === 'admin')) {
+    // SLP and Admin can access all resources
     // No additional filter needed
   } else {
     // Non-therapist users can only access public resources
@@ -56,11 +68,7 @@ const getResources = asyncHandler(async (req, res) => {
   const skip = (parseInt(page) - 1) * parseInt(limit);
 
   const resources = await Resource.find(filter)
-    .populate('uploadedBy', 'userId')
-    .populate({
-      path: 'uploadedBy',
-      populate: { path: 'userId', select: 'firstName lastName' }
-    })
+    .populate('uploadedBy', 'firstName lastName role')
     .sort({ downloads: -1, createdAt: -1 })
     .skip(skip)
     .limit(parseInt(limit));
@@ -84,13 +92,16 @@ const getResources = asyncHandler(async (req, res) => {
 // @access  Public (with access level check)
 const getResource = asyncHandler(async (req, res) => {
   const resource = await Resource.findById(req.params.id)
-    .populate('uploadedBy', 'userId')
-    .populate({
-      path: 'uploadedBy',
-      populate: { path: 'userId', select: 'firstName lastName' }
-    });
+    .populate('uploadedBy', 'firstName lastName role');
 
-  if (!resource || !resource.isApproved || !resource.isPublic) {
+  if (!resource) {
+    return res.status(404).json({
+      success: false,
+      message: 'Resource not found',
+    });
+  }
+
+  if ((!resource.isApproved || !resource.isPublic) && (!req.user || req.user.role !== 'admin' && resource.uploadedBy._id.toString() !== req.user._id.toString())) {
     return res.status(404).json({
       success: false,
       message: 'Resource not found',
@@ -113,7 +124,7 @@ const getResource = asyncHandler(async (req, res) => {
     });
   }
 
-  if (!userCredentials && resource.accessLevel !== 'public') {
+  if (!userCredentials && resource.accessLevel !== 'public' && (!req.user || req.user.role !== 'admin')) {
     return res.status(403).json({
       success: false,
       message: 'This resource requires therapist credentials',
@@ -132,49 +143,71 @@ const getResource = asyncHandler(async (req, res) => {
 
 // @desc    Create new resource
 // @route   POST /api/resources
-// @access  Private (Therapist)
+// @access  Private (Therapist or Admin)
 const createResource = asyncHandler(async (req, res) => {
-  const therapist = await Therapist.findOne({ userId: req.user._id });
+  let therapist = null;
 
-  if (!therapist) {
-    return res.status(404).json({
+  if (!req.file) {
+    return res.status(400).json({
       success: false,
-      message: 'Therapist profile not found',
+      message: 'Please upload a file',
     });
   }
 
-  // SLPA cannot upload SLP-only resources
-  if (therapist.credentials === 'SLPA' && req.body.accessLevel === 'SLP') {
-    return res.status(403).json({
-      success: false,
-      message: 'SLPA credentials cannot create SLP-only resources',
-    });
+  if (req.user.role === 'therapist') {
+    therapist = await Therapist.findOne({ userId: req.user._id });
+
+    if (!therapist) {
+      return res.status(404).json({
+        success: false,
+        message: 'Therapist profile not found',
+      });
+    }
+
+    // SLPA cannot upload SLP-only resources
+    if (therapist && therapist.credentials === 'SLPA' && req.body.accessLevel === 'SLP') {
+      return res.status(403).json({
+        success: false,
+        message: 'SLPA credentials cannot create SLP-only resources',
+      });
+    }
+
+    // SLPA cannot upload assessment resources
+    if (therapist && therapist.credentials === 'SLPA' && req.body.category === 'assessment') {
+      return res.status(403).json({
+        success: false,
+        message: 'SLPA credentials cannot upload assessment resources',
+      });
+    }
   }
 
-  // SLPA cannot upload assessment resources
-  if (therapist.credentials === 'SLPA' && req.body.category === 'assessment') {
-    return res.status(403).json({
-      success: false,
-      message: 'SLPA credentials cannot upload assessment resources',
-    });
+  const isAdmin = req.user.role === 'admin';
+  const fileUrl = `/uploads/resources/${req.file.filename}`;
+
+  // Parse arrays if they are strings (from form-data)
+  let tags = req.body.tags;
+  if (typeof tags === 'string') {
+    tags = tags.split(',').map(tag => tag.trim()).filter(Boolean);
   }
 
   const resource = await Resource.create({
-    uploadedBy: therapist._id,
+    uploadedBy: req.user._id,
     ...req.body,
-    isApproved: false, // Requires admin approval
+    tags,
+    fileUrl,
+    fileSize: req.file.size,
+    fileType: req.file.mimetype,
+    isApproved: isAdmin, // Auto-approve for admins
+    isPublic: true, // Make public by default
+    ...(isAdmin && { approvedBy: req.user._id, approvedAt: Date.now() })
   });
 
   const populatedResource = await Resource.findById(resource._id)
-    .populate('uploadedBy', 'userId')
-    .populate({
-      path: 'uploadedBy',
-      populate: { path: 'userId', select: 'firstName lastName' }
-    });
+    .populate('uploadedBy', 'firstName lastName role');
 
   res.status(201).json({
     success: true,
-    message: 'Resource created successfully. Pending admin approval.',
+    message: isAdmin ? 'Resource created successfully.' : 'Resource created successfully. Pending admin approval.',
     data: populatedResource,
   });
 });
@@ -192,10 +225,8 @@ const updateResource = asyncHandler(async (req, res) => {
     });
   }
 
-  const therapist = await Therapist.findOne({ userId: req.user._id });
-
   // Check authorization
-  if (resource.uploadedBy.toString() !== therapist._id.toString() && req.user.role !== 'admin') {
+  if (resource.uploadedBy.toString() !== req.user._id.toString() && req.user.role !== 'admin') {
     return res.status(403).json({
       success: false,
       message: 'Not authorized',
@@ -203,31 +234,42 @@ const updateResource = asyncHandler(async (req, res) => {
   }
 
   // SLPA restrictions
-  if (therapist && therapist.credentials === 'SLPA') {
-    if (req.body.accessLevel === 'SLP') {
-      return res.status(403).json({
-        success: false,
-        message: 'SLPA credentials cannot set access level to SLP',
-      });
+  if (req.user.role === 'therapist') {
+    const therapist = await Therapist.findOne({ userId: req.user._id });
+    if (therapist && therapist.credentials === 'SLPA') {
+      if (req.body.accessLevel === 'SLP') {
+        return res.status(403).json({
+          success: false,
+          message: 'SLPA credentials cannot set access level to SLP',
+        });
+      }
+      if (req.body.category === 'assessment') {
+        return res.status(403).json({
+          success: false,
+          message: 'SLPA credentials cannot upload assessment resources',
+        });
+      }
     }
-    if (req.body.category === 'assessment') {
-      return res.status(403).json({
-        success: false,
-        message: 'SLPA credentials cannot upload assessment resources',
-      });
-    }
+  }
+
+  const updateData = { ...req.body };
+
+  // Parse arrays if they are strings
+  if (typeof updateData.tags === 'string') {
+    updateData.tags = updateData.tags.split(',').map(tag => tag.trim()).filter(Boolean);
+  }
+
+  if (req.file) {
+    updateData.fileUrl = `/uploads/resources/${req.file.filename}`;
+    updateData.fileSize = req.file.size;
+    updateData.fileType = req.file.mimetype;
   }
 
   const updatedResource = await Resource.findByIdAndUpdate(
     req.params.id,
-    req.body,
+    updateData,
     { new: true, runValidators: true }
-  )
-    .populate('uploadedBy', 'userId')
-    .populate({
-      path: 'uploadedBy',
-      populate: { path: 'userId', select: 'firstName lastName' }
-    });
+  ).populate('uploadedBy', 'firstName lastName role');
 
   res.json({
     success: true,
@@ -249,10 +291,8 @@ const deleteResource = asyncHandler(async (req, res) => {
     });
   }
 
-  const therapist = await Therapist.findOne({ userId: req.user._id });
-
   // Check authorization
-  if (resource.uploadedBy.toString() !== therapist._id.toString() && req.user.role !== 'admin') {
+  if (resource.uploadedBy.toString() !== req.user._id.toString() && req.user.role !== 'admin') {
     return res.status(403).json({
       success: false,
       message: 'Not authorized',
@@ -264,6 +304,32 @@ const deleteResource = asyncHandler(async (req, res) => {
   res.json({
     success: true,
     message: 'Resource deleted successfully',
+  });
+});
+
+// @desc    Approve resource
+// @route   PUT /api/resources/:id/approve
+// @access  Private (Admin)
+const approveResource = asyncHandler(async (req, res) => {
+  const resource = await Resource.findById(req.params.id);
+
+  if (!resource) {
+    return res.status(404).json({
+      success: false,
+      message: 'Resource not found',
+    });
+  }
+
+  resource.isApproved = true;
+  resource.approvedBy = req.user._id;
+  resource.approvedAt = Date.now();
+
+  await resource.save();
+
+  res.json({
+    success: true,
+    message: 'Resource approved successfully',
+    data: resource
   });
 });
 
@@ -342,5 +408,6 @@ module.exports = {
   updateResource,
   deleteResource,
   aiSearchResources,
+  approveResource,
 };
 

@@ -3,7 +3,7 @@ const mongoose = require('mongoose');
 const resourceSchema = new mongoose.Schema({
   uploadedBy: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'Therapist',
+    ref: 'User',
     required: true,
   },
   title: {
