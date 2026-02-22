@@ -25,8 +25,8 @@ const therapistSchema = new mongoose.Schema({
   // SUPPORT FOR MULTIPLE PRACTICE LOCATIONS
   practiceLocations: [{
     state: { type: String, required: true },
-    city: { type: String, required: true },
-    postcode: { type: String, required: true },
+    city: { type: String },
+    postcode: { type: String },
   }],
   specializations: [{
     type: String,

@@ -41,3 +41,5 @@ build/
 *.seed
 *.pid.lock
 
+.vercel
+.env*.local
