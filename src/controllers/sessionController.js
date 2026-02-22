@@ -257,8 +257,8 @@ const createSession = asyncHandler(async (req, res) => {
     // Check if client has completed an evaluation
     const Evaluation = require('../models/Evaluation');
     const completedEval = await Evaluation.findOne({
-      clientId: clientId,
-      status: 'completed'
+      clientId: client.userId,
+      status: { $in: ['completed', 'recommendations_sent'] }
     });
 
     // Also check if they have a legacy "Evaluation" session marked as completed
