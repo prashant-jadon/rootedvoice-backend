@@ -642,41 +642,71 @@ const getTherapistEarnings = asyncHandler(async (req, res) => {
     ...paymentDateFilter,
   });
 
-  // Calculate earnings based on hourly rate (NOT percentage splits)
-  // Therapists are paid their current hourly rate for hours worked
+  // Ensure sessions are sorted chronologically
+  sessions.sort((a, b) => new Date(a.scheduledDate) - new Date(b.scheduledDate));
+
+  // Determine the start of the first pay period based on the first session date, or the start date if provided
+  let currentPayPeriodStart = null;
+  const payPeriodLengthMs = 14 * 24 * 60 * 60 * 1000;
+
+  // Initialize accumulators
+  let accumulatedHours = 0;
   let totalEarnings = 0;
   let totalRevenue = 0;
-
-  for (const session of sessions) {
-    if (session.therapistId) {
-      const hourlyRate = session.therapistId.hourlyRate || (session.therapistId.credentials === 'SLPA' ? 30 : 35);
-      const hoursWorked = (session.duration || 0) / 60; // Convert minutes to hours
-      const sessionEarnings = Math.round(hourlyRate * hoursWorked * 100); // Convert to cents
-      totalEarnings += sessionEarnings;
-
-      // Total revenue is the session price paid by client
-      const payment = payments.find(p => p.sessionId.toString() === session._id.toString());
-      if (payment) {
-        totalRevenue += payment.amount;
-      }
-    }
-  }
-
-  // Aggregate earnings by credential type (based on hourly rate, NOT percentage splits)
   const earningsByCredential = {};
+
+  // Rate Caps
+  const { getRateCapsForUse } = require('./pricingController');
+  const rateCaps = getRateCapsForUse();
+
   for (const session of sessions) {
     if (session.therapistId) {
+      if (!currentPayPeriodStart) {
+        // Find the Monday of the week of the first session
+        const sessionDate = new Date(session.scheduledDate);
+        const day = sessionDate.getDay();
+        const diff = sessionDate.getDate() - day + (day === 0 ? -6 : 1);
+        currentPayPeriodStart = new Date(sessionDate.setDate(diff));
+        currentPayPeriodStart.setHours(0, 0, 0, 0); // Start of the day
+      }
+
+      // Check if the session falls into a new pay period
+      if (new Date(session.scheduledDate) >= new Date(currentPayPeriodStart.getTime() + payPeriodLengthMs)) {
+        // Fast forward the pay period start to the correct period
+        while (new Date(session.scheduledDate) >= new Date(currentPayPeriodStart.getTime() + payPeriodLengthMs)) {
+          currentPayPeriodStart = new Date(currentPayPeriodStart.getTime() + payPeriodLengthMs);
+        }
+        accumulatedHours = 0; // Reset hours for the new pay period
+      }
+
       const credentialType = session.therapistId.credentials || 'SLP';
+      const maxRate = rateCaps[credentialType] || rateCaps.SLP;
+      const baseRate = credentialType === 'SLP' ? 35 : 30;
+
+      // Calculate the current rate.
+      let currentRate = baseRate + (5 * Math.floor(accumulatedHours / 5));
+      currentRate = Math.min(currentRate, maxRate);
+
+      const hoursWorked = (session.duration || 0) / 60; // Convert minutes to hours
+      const sessionEarnings = Math.round(currentRate * hoursWorked * 100); // Convert to cents
+
+      totalEarnings += sessionEarnings;
+      accumulatedHours += hoursWorked;
+
+      // Initialize credential aggregation
       if (!earningsByCredential[credentialType]) {
         earningsByCredential[credentialType] = { hours: 0, earnings: 0, sessions: 0 };
       }
-      const hoursWorked = (session.duration || 0) / 60;
-      const hourlyRate = session.therapistId.hourlyRate || (credentialType === 'SLPA' ? 30 : 35);
-      const sessionEarnings = Math.round(hourlyRate * hoursWorked * 100); // Convert to cents
 
       earningsByCredential[credentialType].hours += hoursWorked;
       earningsByCredential[credentialType].earnings += sessionEarnings;
       earningsByCredential[credentialType].sessions += 1;
+
+      // Calculate Platform Revenue
+      const payment = payments.find(p => p.sessionId.toString() === session._id.toString());
+      if (payment) {
+        totalRevenue += payment.amount;
+      }
     }
   }
 
@@ -752,14 +782,47 @@ const getAllTherapistsEarnings = asyncHandler(async (req, res) => {
         ...paymentDateFilter,
       });
 
-      // Calculate earnings based on hourly rate (NOT percentage splits)
+      // Calculate earnings based on dynamic biweekly progression
+      // Ensure sessions are sorted chronologically
+      sessions.sort((a, b) => new Date(a.scheduledDate) - new Date(b.scheduledDate));
+
       let totalEarnings = 0;
+      let accumulatedHours = 0;
+      let currentPayPeriodStart = null;
+      const payPeriodLengthMs = 14 * 24 * 60 * 60 * 1000;
+
+      const { getRateCapsForUse } = require('./pricingController');
+      const rateCaps = getRateCapsForUse();
+
       for (const session of sessions) {
         if (session.therapistId) {
-          const hourlyRate = session.therapistId.hourlyRate || (therapist.credentials === 'SLPA' ? 30 : 35);
+          if (!currentPayPeriodStart) {
+            const sessionDate = new Date(session.scheduledDate);
+            const day = sessionDate.getDay();
+            const diff = sessionDate.getDate() - day + (day === 0 ? -6 : 1);
+            currentPayPeriodStart = new Date(sessionDate.setDate(diff));
+            currentPayPeriodStart.setHours(0, 0, 0, 0); // Start of the day
+          }
+
+          if (new Date(session.scheduledDate) >= new Date(currentPayPeriodStart.getTime() + payPeriodLengthMs)) {
+            while (new Date(session.scheduledDate) >= new Date(currentPayPeriodStart.getTime() + payPeriodLengthMs)) {
+              currentPayPeriodStart = new Date(currentPayPeriodStart.getTime() + payPeriodLengthMs);
+            }
+            accumulatedHours = 0;
+          }
+
+          const credentialType = therapist.credentials || 'SLP';
+          const maxRate = rateCaps[credentialType] || rateCaps.SLP;
+          const baseRate = credentialType === 'SLP' ? 35 : 30;
+
+          let currentRate = baseRate + (5 * Math.floor(accumulatedHours / 5));
+          currentRate = Math.min(currentRate, maxRate);
+
           const hoursWorked = (session.duration || 0) / 60; // Convert minutes to hours
-          const sessionEarnings = Math.round(hourlyRate * hoursWorked * 100); // Convert to cents
+          const sessionEarnings = Math.round(currentRate * hoursWorked * 100); // Convert to cents
+
           totalEarnings += sessionEarnings;
+          accumulatedHours += hoursWorked;
         }
       }
 

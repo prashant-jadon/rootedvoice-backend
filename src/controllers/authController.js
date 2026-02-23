@@ -48,15 +48,8 @@ const register = asyncHandler(async (req, res) => {
         throw new Error('VALIDATION:License number or SPA membership number is required');
       }
 
-      // Get rate caps for validation
-      const { getRateCapsForUse } = require('./pricingController');
-      const rateCaps = getRateCapsForUse();
-      const maxRate = rateCaps[additionalData.credentials] || rateCaps.SLP;
-      const hourlyRate = additionalData.hourlyRate || (additionalData.credentials === 'SLP' ? 75 : 55);
-
-      if (hourlyRate > maxRate) {
-        throw new Error(`VALIDATION:Hourly rate for ${additionalData.credentials} cannot exceed $${maxRate}/hour`);
-      }
+      // Get base rates for compensation progression
+      const hourlyRate = additionalData.credentials === 'SLP' ? 35 : 30;
 
       // Create therapist with pending status (requires admin verification)
       const therapist = await Therapist.create({
