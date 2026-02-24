@@ -13,6 +13,7 @@ const {
 const { protect, optionalAuth } = require('../middlewares/auth');
 const { isTherapist } = require('../middlewares/roleCheck');
 const upload = require('../config/multer');
+const { uploadLimiter } = require('../middlewares/rateLimiter');
 
 // Public routes
 router.get('/', optionalAuth, getTherapists);
@@ -21,7 +22,7 @@ router.get('/', optionalAuth, getTherapists);
 router.get('/me', protect, isTherapist, getMyProfile);
 router.get('/me/payments', protect, isTherapist, getMyPayments);
 router.post('/', protect, isTherapist, createOrUpdateTherapist);
-router.post('/upload-documents', protect, isTherapist, upload.fields([
+router.post('/upload-documents', protect, isTherapist, uploadLimiter, upload.fields([
   // US-based fields (primary)
   { name: 'ashaCertification', maxCount: 1 },
   { name: 'stateLicensure', maxCount: 1 },

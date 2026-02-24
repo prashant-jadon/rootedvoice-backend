@@ -3,6 +3,7 @@ const router = express.Router();
 const upload = require('../config/multer');
 const { protect } = require('../middlewares/auth');
 const { isAdmin } = require('../middlewares/roleCheck');
+const { uploadLimiter } = require('../middlewares/rateLimiter');
 const {
   getSupportAgent,
   getConversations,
@@ -22,14 +23,14 @@ router.use(protect);
 router.get('/support-agent', getSupportAgent);
 router.get('/conversations', getConversations);
 router.get('/:userId', getMessages);
-router.post('/', upload.array('attachments', 5), sendMessage);
+router.post('/', uploadLimiter, upload.array('attachments', 5), sendMessage);
 router.put('/read', markAsRead);
 router.delete('/:id', deleteMessage);
 
 // Admin-only routes for support chat
 router.get('/admin/support-conversations', isAdmin, getSupportConversations);
 router.get('/admin/conversation/:userId', isAdmin, getAdminConversation);
-router.post('/admin/reply', isAdmin, upload.array('attachments', 5), sendAdminReply);
+router.post('/admin/reply', isAdmin, uploadLimiter, upload.array('attachments', 5), sendAdminReply);
 
 module.exports = router;
 

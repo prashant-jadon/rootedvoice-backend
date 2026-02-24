@@ -5,6 +5,8 @@ const helmet = require('helmet');
 const mongoSanitize = require('express-mongo-sanitize');
 const morgan = require('morgan');
 const cookieParser = require('cookie-parser');
+const compression = require('compression');
+const hpp = require('hpp');
 const path = require('path');
 
 // Import config
@@ -22,26 +24,59 @@ const app = express();
 // Connect to database
 connectDB();
 
-// Middleware
-app.set('trust proxy', 1); // Trust first proxy (required for rate limiter behind reverse proxy / Lambda)
-app.use(helmet()); // Security headers
+// ─── Trust Proxy (required for rate limiter behind reverse proxy / Vercel) ───
+app.set('trust proxy', 1);
 
-// CORS configuration - allow multiple origins
-const allowedOrigins = [
-  process.env.FRONTEND_URL || 'http://localhost:3000',
-  process.env.ADMIN_PANEL_URL || 'http://localhost:5173',
-  'http://localhost:3000',
-  'http://localhost:5173',
-];
+// ─── Security Headers ───
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", 'data:', 'https:'],
+      connectSrc: ["'self'", 'https:'],
+      fontSrc: ["'self'", 'https:', 'data:'],
+      objectSrc: ["'none'"],
+      mediaSrc: ["'self'"],
+      frameSrc: ["'self'", 'https://meet.jit.si', 'https://js.stripe.com'],
+    },
+  },
+  crossOriginEmbedderPolicy: false, // Allow embedding Jitsi, Stripe iframes
+  hsts: {
+    maxAge: 31536000, // 1 year
+    includeSubDomains: true,
+    preload: true,
+  },
+}));
+
+// ─── CORS ───
+const buildAllowedOrigins = () => {
+  const origins = [];
+
+  if (process.env.FRONTEND_URL) origins.push(process.env.FRONTEND_URL);
+  if (process.env.ADMIN_PANEL_URL) origins.push(process.env.ADMIN_PANEL_URL);
+
+  // Only allow localhost in development
+  if (process.env.NODE_ENV !== 'production') {
+    origins.push('http://localhost:3000');
+    origins.push('http://localhost:5173');
+  }
+
+  return origins;
+};
+
+const allowedOrigins = buildAllowedOrigins();
 
 app.use(cors({
   origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl requests)
+    // Allow requests with no origin (mobile apps, curl, server-to-server)
     if (!origin) return callback(null, true);
 
     if (allowedOrigins.indexOf(origin) !== -1) {
       callback(null, true);
     } else {
+      console.warn(`[CORS] Blocked request from origin: ${origin}`);
       callback(new Error('Not allowed by CORS'));
     }
   },
@@ -49,61 +84,73 @@ app.use(cors({
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
 }));
-app.use(morgan('dev')); // Logging
 
-// Stripe webhook must be before body parser (needs raw body)
+// ─── Logging ───
+if (process.env.NODE_ENV === 'production') {
+  app.use(morgan('combined'));
+} else {
+  app.use(morgan('dev'));
+}
+
+// ─── Stripe webhook must be before body parser (needs raw body) ───
 app.use('/api/stripe/webhook', express.raw({ type: 'application/json' }));
 
-app.use(express.json()); // Body parser
-app.use(express.urlencoded({ extended: true }));
-app.use(cookieParser()); // Cookie parser
-app.use(mongoSanitize()); // Sanitize data
+// ─── Body Parsing (with size limits to prevent payload attacks) ───
+app.use(express.json({ limit: '10kb' }));
+app.use(express.urlencoded({ extended: true, limit: '10kb' }));
+app.use(cookieParser());
 
-// Serve static files (uploads)
+// ─── Security Middleware ───
+app.use(mongoSanitize()); // Prevent NoSQL injection
+app.use(hpp());           // Prevent HTTP Parameter Pollution
+
+// ─── Performance ───
+app.use(compression());   // Gzip compression
+
+// ─── Static Files (uploads) ───
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
-// Apply rate limiting to API routes (except webhook)
+// ─── Rate Limiting (applied to all /api routes except webhook) ───
 app.use('/api', (req, res, next) => {
   if (req.path === '/stripe/webhook') {
-    return next(); // Skip rate limiting for webhook
+    return next();
   }
   apiLimiter(req, res, next);
 });
 
-// Mount API routes
+// ─── API Routes ───
 app.use('/api', routes);
 
-// Root endpoint
+// ─── Root Endpoint ───
 app.get('/', (req, res) => {
   res.json({
     success: true,
     message: 'Rooted Voices API',
     version: '1.0.0',
-    documentation: '/api/health',
+    environment: process.env.NODE_ENV || 'development',
   });
 });
 
-// 404 handler
+// ─── 404 Handler ───
 app.use(notFound);
 
-// Error handler
+// ─── Error Handler ───
 app.use(errorHandler);
 
-// Only start server if not in serverless environment (Vercel)
-// Vercel will handle the serverless function execution
+// ─── Server Startup (non-serverless only) ───
 let server = null;
 
 if (process.env.VERCEL !== '1' && !process.env.VERCEL_ENV) {
-  // Start server
   const PORT = process.env.PORT || 5000;
 
   server = app.listen(PORT, () => {
     console.log('');
     console.log('🚀 ================================ 🚀');
-    console.log(`✅  Server running in ${process.env.NODE_ENV} mode`);
+    console.log(`✅  Server running in ${process.env.NODE_ENV || 'development'} mode`);
     console.log(`✅  API listening on port ${PORT}`);
     console.log(`🌐  API URL: http://localhost:${PORT}`);
     console.log(`🏥  Health check: http://localhost:${PORT}/api/health`);
+    console.log(`🔒  CORS origins: ${allowedOrigins.join(', ')}`);
     console.log('🚀 ================================ 🚀');
     console.log('');
   });
@@ -123,7 +170,6 @@ if (process.env.VERCEL !== '1' && !process.env.VERCEL_ENV) {
     initWebPush();
 
     // Run every 15 minutes to check for reminders
-    // This ensures we catch sessions at the right time for 45-minute reminders
     cron.schedule('*/15 * * * *', async () => {
       try {
         await sendSessionReminders();
@@ -144,14 +190,23 @@ if (process.env.VERCEL !== '1' && !process.env.VERCEL_ENV) {
     console.log('✅ Session reminder service initialized (runs every 15 minutes)');
   }
 
-  // Initialize evaluation cron jobs (review deadlines, reminders, rollovers)
+  // Initialize evaluation cron jobs
   const { initCronJobs } = require('./utils/cronJobs');
   initCronJobs();
 
   // Handle unhandled promise rejections
   process.on('unhandledRejection', (err, promise) => {
     console.error(`❌ Unhandled Rejection: ${err.message}`);
-    // Close server & exit process
+    if (server) {
+      server.close(() => process.exit(1));
+    } else {
+      process.exit(1);
+    }
+  });
+
+  // Handle uncaught exceptions
+  process.on('uncaughtException', (err) => {
+    console.error(`❌ Uncaught Exception: ${err.message}`);
     if (server) {
       server.close(() => process.exit(1));
     } else {
@@ -159,10 +214,8 @@ if (process.env.VERCEL !== '1' && !process.env.VERCEL_ENV) {
     }
   });
 } else {
-  // Serverless environment
   console.log('🚀 Running in serverless mode (Vercel)');
 }
 
 // Always export app (and server if available)
 module.exports = server ? { app, server } : { app };
-

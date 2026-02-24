@@ -45,11 +45,23 @@ router.get('/public/platform-stats', getPlatformStats);
 
 // Health check
 router.get('/health', (req, res) => {
-  res.json({
-    success: true,
-    message: 'API is running',
+  const mongoose = require('mongoose');
+  const dbState = mongoose.connection.readyState;
+  const dbStates = { 0: 'disconnected', 1: 'connected', 2: 'connecting', 3: 'disconnecting' };
+
+  const healthData = {
+    success: dbState === 1,
+    message: dbState === 1 ? 'API is running' : 'API is running but database is not connected',
     timestamp: new Date().toISOString(),
-  });
+    uptime: Math.floor(process.uptime()) + 's',
+    database: dbStates[dbState] || 'unknown',
+    memory: {
+      rss: Math.round(process.memoryUsage().rss / 1024 / 1024) + 'MB',
+      heapUsed: Math.round(process.memoryUsage().heapUsed / 1024 / 1024) + 'MB',
+    },
+  };
+
+  res.status(dbState === 1 ? 200 : 503).json(healthData);
 });
 
 module.exports = router;

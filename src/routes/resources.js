@@ -3,6 +3,7 @@ const router = express.Router();
 const { protect, optionalAuth } = require('../middlewares/auth');
 const { authorize, isAdmin } = require('../middlewares/roleCheck');
 const upload = require('../config/multer');
+const { uploadLimiter } = require('../middlewares/rateLimiter');
 const {
   getResources,
   getResource,
@@ -22,8 +23,8 @@ router.get('/:id', optionalAuth, getResource);
 router.use(protect);
 router.use(authorize('therapist', 'admin'));
 
-router.post('/', upload.single('resource'), createResource);
-router.put('/:id', upload.single('resource'), updateResource);
+router.post('/', uploadLimiter, upload.single('resource'), createResource);
+router.put('/:id', uploadLimiter, upload.single('resource'), updateResource);
 router.delete('/:id', deleteResource);
 
 // Admin-only route

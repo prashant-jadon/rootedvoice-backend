@@ -16,6 +16,7 @@ const {
 } = require('../controllers/clientController');
 const { protect } = require('../middlewares/auth');
 const { isTherapist, isClient } = require('../middlewares/roleCheck');
+const { uploadLimiter } = require('../middlewares/rateLimiter');
 
 // Therapist routes
 router.get('/', protect, isTherapist, getClients);
@@ -29,7 +30,7 @@ router.get('/intake/status', protect, isClient, getIntakeStatus);
 
 // Shared routes - parameterized routes must come last
 router.get('/:id', protect, getClient);
-router.post('/:id/documents', protect, upload.single('document'), uploadDocument);
+router.post('/:id/documents', protect, uploadLimiter, upload.single('document'), uploadDocument);
 router.get('/:id/documents', protect, getDocuments);
 router.get('/:id/documents/search', protect, searchDocuments);
 router.delete('/:id/documents/:docId', protect, deleteDocument);

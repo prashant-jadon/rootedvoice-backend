@@ -10,6 +10,7 @@ const { put, del } = require('@vercel/blob');
  */
 const uploadToBlob = async (buffer, pathname, options = {}) => {
     const blob = await put(pathname, buffer, {
+        access: 'private',
         contentType: options.contentType || 'application/octet-stream',
         token: process.env.BLOB_READ_WRITE_TOKEN,
     });
