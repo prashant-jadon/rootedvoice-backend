@@ -245,7 +245,7 @@ const login = asyncHandler(async (req, res) => {
 
   // Update last login
   user.lastLogin = new Date();
-  await user.save();
+  await user.save({ validateBeforeSave: false });
 
   // Generate tokens
   const accessToken = generateAccessToken(user._id, user.role);
@@ -367,7 +367,7 @@ const resetPassword = asyncHandler(async (req, res) => {
   user.password = newPassword;
   user.passwordResetToken = undefined;
   user.passwordResetExpires = undefined;
-  await user.save();
+  await user.save({ validateBeforeSave: false });
 
   res.json({
     success: true,

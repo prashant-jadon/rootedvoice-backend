@@ -46,7 +46,7 @@ router.post('/subscribe', protect, async (req, res) => {
       },
     };
 
-    await user.save();
+    await user.save({ validateBeforeSave: false });
 
     res.json({
       success: true,
@@ -73,7 +73,7 @@ router.post('/unsubscribe', protect, async (req, res) => {
     }
 
     user.pushSubscription = null;
-    await user.save();
+    await user.save({ validateBeforeSave: false });
 
     res.json({
       success: true,
