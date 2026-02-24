@@ -1,9 +1,10 @@
 const { asyncHandler } = require('../middlewares/errorHandler');
+const { Readable } = require('stream');
 
 /**
  * @desc    Proxy a private Vercel Blob URL — streams the file to the client
  * @route   GET /api/blob/proxy?url=<encoded-blob-url>
- * @access  Private (any authenticated user)
+ * @access  Public (URL-validated — only our blob store domain is allowed)
  */
 const proxyBlobFile = asyncHandler(async (req, res) => {
     const { url } = req.query;
@@ -60,26 +61,30 @@ const proxyBlobFile = asyncHandler(async (req, res) => {
 
         // Allow browser caching for 1 hour
         res.setHeader('Cache-Control', 'private, max-age=3600');
+        // Allow cross-origin image loading
+        res.setHeader('Access-Control-Allow-Origin', '*');
 
-        // Stream the response body to the client
-        const reader = response.body.getReader();
-        const pump = async () => {
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) {
-                    res.end();
-                    return;
-                }
-                res.write(value);
-            }
-        };
-        await pump();
+        // Convert the web ReadableStream to a Node.js Readable and pipe it
+        if (response.body && typeof response.body.pipe === 'function') {
+            // Node.js native fetch returns a web stream — convert via Readable.fromWeb
+            response.body.pipe(res);
+        } else if (response.body && typeof response.body.getReader === 'function') {
+            // Web stream with getReader
+            const nodeStream = Readable.fromWeb(response.body);
+            nodeStream.pipe(res);
+        } else {
+            // Fallback: read entire body as buffer
+            const buffer = Buffer.from(await response.arrayBuffer());
+            res.end(buffer);
+        }
     } catch (error) {
         console.error('Blob proxy error:', error.message);
-        res.status(500).json({
-            success: false,
-            message: 'Failed to proxy blob file',
-        });
+        if (!res.headersSent) {
+            res.status(500).json({
+                success: false,
+                message: 'Failed to proxy blob file',
+            });
+        }
     }
 });
 
