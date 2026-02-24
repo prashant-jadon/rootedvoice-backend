@@ -48,8 +48,9 @@ const sendSMS = async (to, message) => {
     // Format phone number (ensure it starts with +)
     let phoneNumber = to.trim();
     if (!phoneNumber.startsWith('+')) {
-      // Assume US number if no country code
-      phoneNumber = `+1${phoneNumber.replace(/\D/g, '')}`;
+      // Remove leading 0 and assume India (+91) if no country code
+      const digits = phoneNumber.replace(/\D/g, '').replace(/^0+/, '');
+      phoneNumber = `+1${digits}`;
     }
 
     const result = await twilioClient.messages.create({
