@@ -136,6 +136,7 @@ const uploadDocuments = asyncHandler(async (req, res) => {
   const documentTypes = [
     'ashaCertification',
     'stateLicensure',
+    'stateLicense', // Frontend sends this for single state license
     'supervisionAgreement',
     'professionalLiabilityInsurance',
     'backgroundCheck',
@@ -163,22 +164,22 @@ const uploadDocuments = asyncHandler(async (req, res) => {
   }
 
   // Update therapist with document URLs - US-based fields (primary)
-  if (uploadedFiles.ashaCertification && req.body.ashaCertificationNumber) {
+  if (uploadedFiles.ashaCertification) {
     therapist.complianceDocuments.ashaCertification = {
       ...therapist.complianceDocuments.ashaCertification,
-      certificationNumber: req.body.ashaCertificationNumber,
-      expirationDate: req.body.ashaCertificationExpirationDate,
+      ...(req.body.ashaCertificationNumber && { certificationNumber: req.body.ashaCertificationNumber }),
+      ...(req.body.ashaCertificationExpirationDate && { expirationDate: req.body.ashaCertificationExpirationDate }),
       documentUrl: uploadedFiles.ashaCertification,
     };
   }
 
-  if (uploadedFiles.stateLicensure && req.body.licenseNumber) {
+  if ((uploadedFiles.stateLicensure || uploadedFiles.stateLicense) && req.body.licenseNumber) {
     therapist.complianceDocuments.stateLicensure = {
       ...therapist.complianceDocuments.stateLicensure,
       licenseNumber: req.body.licenseNumber,
       state: req.body.licensingState,
       expirationDate: req.body.licenseExpirationDate,
-      documentUrl: uploadedFiles.stateLicensure,
+      documentUrl: uploadedFiles.stateLicensure || uploadedFiles.stateLicense,
     };
   }
 

@@ -22,6 +22,15 @@ router.get('/me', protect, isTherapist, getMyProfile);
 router.get('/me/payments', protect, isTherapist, getMyPayments);
 router.post('/', protect, isTherapist, createOrUpdateTherapist);
 router.post('/upload-documents', protect, isTherapist, upload.fields([
+  // US-based fields (primary)
+  { name: 'ashaCertification', maxCount: 1 },
+  { name: 'stateLicensure', maxCount: 1 },
+  { name: 'stateLicensures', maxCount: 10 },
+  { name: 'stateLicense', maxCount: 1 },
+  { name: 'supervisionAgreement', maxCount: 1 },
+  { name: 'professionalLiabilityInsurance', maxCount: 1 },
+  { name: 'backgroundCheck', maxCount: 1 },
+  // Legacy fields
   { name: 'spaMembership', maxCount: 1 },
   { name: 'stateRegistration', maxCount: 1 },
   { name: 'professionalIndemnityInsurance', maxCount: 1 },
