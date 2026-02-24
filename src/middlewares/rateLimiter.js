@@ -10,6 +10,7 @@ const apiLimiter = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
+  validate: { xForwardedForHeader: false },
 });
 
 // Strict rate limiter for auth endpoints
@@ -21,6 +22,7 @@ const authLimiter = rateLimit({
     success: false,
     message: 'Too many authentication attempts, please try again later.',
   },
+  validate: { xForwardedForHeader: false },
 });
 
 // Upload rate limiter
@@ -31,6 +33,7 @@ const uploadLimiter = rateLimit({
     success: false,
     message: 'Too many uploads, please try again later.',
   },
+  validate: { xForwardedForHeader: false },
 });
 
 module.exports = {
