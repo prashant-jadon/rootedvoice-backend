@@ -5,6 +5,7 @@ const Payment = require('../models/Payment');
 const { asyncHandler } = require('../middlewares/errorHandler');
 const { v4: uuidv4 } = require('uuid');
 const { getCancellationFee, getRateCapsForUse } = require('./pricingController');
+const { sendEmail, emailTemplates } = require('../utils/emailService');
 
 // @desc    Get all sessions
 // @route   GET /api/sessions
@@ -431,6 +432,61 @@ const createSession = asyncHandler(async (req, res) => {
 
   // Start async calendar event creation (don't await)
   createCalendarEventsAsync();
+
+  // Send email notifications to both client and therapist (async, don't block response)
+  const sendSessionEmailsAsync = async () => {
+    try {
+      const formattedDate = new Date(sessionDate).toLocaleDateString('en-US', {
+        weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
+      });
+      const sessionDuration = duration || 45;
+      const type = sessionType || 'follow-up';
+
+      // Email to client
+      if (clientUser && clientUser.email) {
+        const clientEmail = emailTemplates.sessionBookedClient(
+          clientUser.firstName,
+          `${therapistUser.firstName} ${therapistUser.lastName}`,
+          formattedDate,
+          scheduledTime,
+          sessionDuration,
+          type,
+          session.meetingLink
+        );
+        await sendEmail({
+          to: clientUser.email,
+          subject: clientEmail.subject,
+          html: clientEmail.html,
+        });
+      }
+
+      // Email to therapist
+      if (therapistUser && therapistUser.email) {
+        const therapistEmail = emailTemplates.sessionBookedTherapist(
+          therapistUser.firstName,
+          `${clientUser.firstName} ${clientUser.lastName}`,
+          formattedDate,
+          scheduledTime,
+          sessionDuration,
+          type,
+          session.meetingLink
+        );
+        await sendEmail({
+          to: therapistUser.email,
+          subject: therapistEmail.subject,
+          html: therapistEmail.html,
+        });
+      }
+
+      console.log(`✅ Session booking emails sent for session ${session._id}`);
+    } catch (error) {
+      console.error('Error sending session booking emails:', error);
+      // Don't fail session creation if email sending fails
+    }
+  };
+
+  // Start async email sending (don't await)
+  sendSessionEmailsAsync();
 
   res.status(201).json({
     success: true,

@@ -286,6 +286,46 @@ const emailTemplates = {
       ${meetingLink ? `<a href="${meetingLink}" class="btn">Join Meeting</a>` : `<a href="${FRONTEND_URL}/client-evaluation" class="btn">View Meeting</a>`}
     `),
   }),
+
+  // ========== SESSION BOOKING TEMPLATES ==========
+
+  // Sent to client when a therapy session is booked
+  sessionBookedClient: (clientName, therapistName, scheduledDate, scheduledTime, duration, sessionType, meetingLink) => ({
+    subject: `Session Booked – ${scheduledDate} at ${scheduledTime}`,
+    html: baseTemplate(`
+      <h2>Your Session is Booked! 🎉</h2>
+      <p>Hi ${clientName},</p>
+      <p>Your ${sessionType === 'initial' ? 'initial consultation' : 'therapy session'} has been scheduled successfully.</p>
+      <div class="info-box">
+        <p><strong>Therapist:</strong> ${therapistName}</p>
+        <p><strong>Date:</strong> ${scheduledDate}</p>
+        <p><strong>Time:</strong> ${scheduledTime}</p>
+        <p><strong>Duration:</strong> ${duration} minutes</p>
+        <p><strong>Type:</strong> Online Video (Jitsi)</p>
+      </div>
+      <p>Please log in 5 minutes before your session. Make sure you have a stable internet connection, camera, and microphone ready.</p>
+      ${meetingLink ? `<a href="${meetingLink}" class="btn">View Session</a>` : `<a href="${FRONTEND_URL}/sessions" class="btn">View Sessions</a>`}
+    `),
+  }),
+
+  // Sent to therapist when a therapy session is booked
+  sessionBookedTherapist: (therapistName, clientName, scheduledDate, scheduledTime, duration, sessionType, meetingLink) => ({
+    subject: `New Session Scheduled – ${scheduledDate} at ${scheduledTime}`,
+    html: baseTemplate(`
+      <h2>New Session Scheduled</h2>
+      <p>Hi ${therapistName},</p>
+      <p>A ${sessionType === 'initial' ? 'initial consultation' : 'therapy session'} has been scheduled with a client.</p>
+      <div class="info-box">
+        <p><strong>Client:</strong> ${clientName}</p>
+        <p><strong>Date:</strong> ${scheduledDate}</p>
+        <p><strong>Time:</strong> ${scheduledTime}</p>
+        <p><strong>Duration:</strong> ${duration} minutes</p>
+        <p><strong>Type:</strong> Online Video (Jitsi)</p>
+      </div>
+      <p>Please review the client's profile before the session and ensure you are available at the scheduled time.</p>
+      ${meetingLink ? `<a href="${meetingLink}" class="btn">View Session</a>` : `<a href="${FRONTEND_URL}/sessions" class="btn">View Sessions</a>`}
+    `),
+  }),
 };
 
 module.exports = {
