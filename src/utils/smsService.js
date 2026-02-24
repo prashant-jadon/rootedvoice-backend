@@ -28,12 +28,20 @@ const sendSMS = async (to, message) => {
   if (!twilioClient) {
     if (!initTwilio()) {
       console.warn('Twilio not configured. SMS will not be sent.');
+      console.log(`[SMS Preview] To: ${to} | Message: ${message}`);
       return { success: false, error: 'SMS service not configured' };
     }
   }
 
   if (!process.env.TWILIO_PHONE_NUMBER) {
+    console.warn('Twilio phone number not set. SMS will not be sent.');
+    console.log(`[SMS Preview] To: ${to} | Message: ${message}`);
     return { success: false, error: 'Twilio phone number not configured' };
+  }
+
+  if (!to) {
+    console.warn('No recipient phone number provided.');
+    return { success: false, error: 'No recipient phone number' };
   }
 
   try {
@@ -50,6 +58,7 @@ const sendSMS = async (to, message) => {
       to: phoneNumber,
     });
 
+    console.log(`✅ SMS sent to ${phoneNumber} (SID: ${result.sid})`);
     return {
       success: true,
       messageId: result.sid,
@@ -63,20 +72,50 @@ const sendSMS = async (to, message) => {
   }
 };
 
-// Send session reminder SMS
-const sendSessionReminderSMS = (name, sessionDate, sessionTime, minutesBefore = 24 * 60) => {
-  const timeText = minutesBefore >= 60 
-    ? `${Math.floor(minutesBefore / 60)} hour${Math.floor(minutesBefore / 60) > 1 ? 's' : ''}`
-    : `${minutesBefore} minute${minutesBefore > 1 ? 's' : ''}`;
-  
-  const message = `Hi ${name}, this is a reminder that you have a therapy session scheduled for ${sessionDate} at ${sessionTime} (in ${timeText}). Please log in 5 minutes before your session starts. - Rooted Voices`;
+// ========== SMS MESSAGE TEMPLATES ==========
 
-  return message;
+const BRAND = 'Rooted Voices';
+
+const smsTemplates = {
+  // Forgot password
+  forgotPassword: (name, resetLink) =>
+    `Hi ${name}, you requested a password reset for your ${BRAND} account. Reset here: ${resetLink} (expires in 1 hour). If you didn't request this, ignore this message.`,
+
+  // Evaluation booked - sent to client
+  evaluationBookedClient: (clientName, therapistName, date, time) =>
+    `Hi ${clientName}, your evaluation with ${therapistName} is booked for ${date} at ${time} (60 min, online). Your therapist will review your details within 3 business days. - ${BRAND}`,
+
+  // Evaluation booked - sent to therapist
+  evaluationBookedTherapist: (therapistName, clientName) =>
+    `Hi ${therapistName}, you've been assigned a new evaluation for ${clientName}. Please review client details within 3 business days. Log in to view: ${process.env.FRONTEND_URL || 'http://localhost:3000'}/my-practice - ${BRAND}`,
+
+  // Therapist ready - sent to client
+  therapistReady: (clientName, therapistName, date, time) =>
+    `Hi ${clientName}, ${therapistName} has reviewed your details and is ready for your evaluation on ${date} at ${time}. Please log in 5 min early. - ${BRAND}`,
+
+  // Evaluation complete with recommendations - sent to client
+  evaluationCompleted: (clientName, therapistName) =>
+    `Hi ${clientName}, your evaluation with ${therapistName} is complete! Recommendations are ready. Your $195 credit is available! View: ${process.env.FRONTEND_URL || 'http://localhost:3000'}/pricing - ${BRAND}`,
+
+  // Session booked - sent to client
+  sessionBookedClient: (clientName, therapistName, date, time, duration) =>
+    `Hi ${clientName}, your session with ${therapistName} is booked for ${date} at ${time} (${duration} min). Log in 5 min early. - ${BRAND}`,
+
+  // Session booked - sent to therapist
+  sessionBookedTherapist: (therapistName, clientName, date, time, duration) =>
+    `Hi ${therapistName}, a session with ${clientName} is scheduled for ${date} at ${time} (${duration} min). - ${BRAND}`,
+
+  // Session reminder
+  sessionReminder: (name, sessionDate, sessionTime, minutesBefore = 24 * 60) => {
+    const timeText = minutesBefore >= 60
+      ? `${Math.floor(minutesBefore / 60)} hour${Math.floor(minutesBefore / 60) > 1 ? 's' : ''}`
+      : `${minutesBefore} minute${minutesBefore > 1 ? 's' : ''}`;
+    return `Hi ${name}, reminder: therapy session on ${sessionDate} at ${sessionTime} (in ${timeText}). Log in 5 min early. - ${BRAND}`;
+  },
 };
 
 module.exports = {
   initTwilio,
   sendSMS,
-  sendSessionReminderSMS,
+  smsTemplates,
 };
-

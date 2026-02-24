@@ -325,15 +325,23 @@ const forgotPassword = asyncHandler(async (req, res) => {
   // Create reset URL
   const resetUrl = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`;
 
-  // Send email
-  await sendEmail({
-    to: user.email,
-    ...emailTemplates.passwordReset(user.firstName, resetUrl),
-  });
+  // Send SMS with reset link
+  const { sendSMS, smsTemplates } = require('../utils/smsService');
+  if (user.phone) {
+    const message = smsTemplates.forgotPassword(user.firstName, resetUrl);
+    await sendSMS(user.phone, message);
+  } else {
+    console.warn(`User ${user.email} has no phone number, falling back to email`);
+    // Fallback to email if no phone
+    await sendEmail({
+      to: user.email,
+      ...emailTemplates.passwordReset(user.firstName, resetUrl),
+    });
+  }
 
   res.json({
     success: true,
-    message: 'Password reset email sent',
+    message: 'Password reset link sent',
   });
 });
 

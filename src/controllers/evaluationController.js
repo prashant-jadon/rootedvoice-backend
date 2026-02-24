@@ -6,6 +6,7 @@ const Session = require('../models/Session');
 const Notification = require('../models/Notification');
 const { asyncHandler } = require('../middlewares/errorHandler');
 const { sendEmail, emailTemplates } = require('../utils/emailService');
+const { sendSMS, smsTemplates } = require('../utils/smsService');
 const { v4: uuidv4 } = require('uuid');
 
 // Helper: Calculate N business days from a date
@@ -315,43 +316,26 @@ const selectTherapist = asyncHandler(async (req, res) => {
         }
     });
 
-    // Send email to therapist with intake form data
-    const clientDetails = {
-        dateOfBirth: client?.dateOfBirth ? formatDate(client.dateOfBirth) : null,
-        primaryConcerns: evaluation.intakeFormData.primaryConcerns,
-        communicationConcerns: evaluation.intakeFormData.communicationConcerns,
-        medicalHistory: evaluation.intakeFormData.medicalHistory,
-        stateOfResidence: evaluation.intakeFormData.stateOfResidence,
-        additionalNotes: evaluation.intakeFormData.additionalNotes,
-        clientType: evaluation.intakeFormData.clientType,
-        currentDiagnoses: evaluation.intakeFormData.currentDiagnoses,
-        guardianName: evaluation.intakeFormData.guardianName,
-        guardianRelation: evaluation.intakeFormData.guardianRelation,
-    };
+    // Send SMS to therapist about new assignment
+    const therapistUser2 = therapist.userId;
+    if (therapistUser2.phone) {
+        const msg = smsTemplates.evaluationBookedTherapist(
+            therapistUser2.firstName,
+            `${clientUser.firstName} ${clientUser.lastName}`
+        );
+        sendSMS(therapistUser2.phone, msg);
+    }
 
-    const therapistEmail = emailTemplates.therapistAssigned(
-        `${therapist.userId.firstName}`,
-        `${clientUser.firstName} ${clientUser.lastName}`,
-        clientDetails
-    );
-    await sendEmail({
-        to: therapist.userId.email,
-        subject: therapistEmail.subject,
-        html: therapistEmail.html,
-    });
-
-    // Send confirmation email to client
-    const bookingEmail = emailTemplates.evaluationBooked(
-        clientUser.firstName,
-        `${therapist.userId.firstName} ${therapist.userId.lastName}`,
-        formatDate(selectedDate),
-        scheduledTime
-    );
-    await sendEmail({
-        to: clientUser.email,
-        subject: bookingEmail.subject,
-        html: bookingEmail.html,
-    });
+    // Send SMS to client confirming booking
+    if (clientUser.phone) {
+        const msg = smsTemplates.evaluationBookedClient(
+            clientUser.firstName,
+            `${therapist.userId.firstName} ${therapist.userId.lastName}`,
+            formatDate(selectedDate),
+            scheduledTime
+        );
+        sendSMS(clientUser.phone, msg);
+    }
 
     // Create notification for client
     await Notification.create({
@@ -463,18 +447,16 @@ const therapistReady = asyncHandler(async (req, res) => {
         metadata: { evaluationId: evaluation._id }
     });
 
-    // Send email to client
-    const readyEmail = emailTemplates.therapistReady(
-        clientUser.firstName,
-        `${therapistUser.firstName} ${therapistUser.lastName}`,
-        formatDate(evaluation.scheduledDate),
-        evaluation.scheduledTime
-    );
-    await sendEmail({
-        to: clientUser.email,
-        subject: readyEmail.subject,
-        html: readyEmail.html,
-    });
+    // Send SMS to client
+    if (clientUser.phone) {
+        const msg = smsTemplates.therapistReady(
+            clientUser.firstName,
+            `${therapistUser.firstName} ${therapistUser.lastName}`,
+            formatDate(evaluation.scheduledDate),
+            evaluation.scheduledTime
+        );
+        sendSMS(clientUser.phone, msg);
+    }
 
     res.json({
         success: true,
@@ -573,24 +555,17 @@ const completeEvaluation = asyncHandler(async (req, res) => {
         await client.save();
     }
 
-    // Send recommendations email
+    // Send SMS with recommendations
     const clientUser = await User.findById(evaluation.clientId);
     const therapistUser = await User.findById(req.user._id);
 
-    const recEmail = emailTemplates.evaluationCompleted(
-        clientUser.firstName,
-        `${therapistUser.firstName} ${therapistUser.lastName}`,
-        {
-            tier: subscriptionTier,
-            notes: notes,
-            resourceAccess: evaluation.resourceLibraryAccessGranted,
-        }
-    );
-    await sendEmail({
-        to: clientUser.email,
-        subject: recEmail.subject,
-        html: recEmail.html,
-    });
+    if (clientUser.phone) {
+        const msg = smsTemplates.evaluationCompleted(
+            clientUser.firstName,
+            `${therapistUser.firstName} ${therapistUser.lastName}`
+        );
+        sendSMS(clientUser.phone, msg);
+    }
 
     // Create notification
     await Notification.create({

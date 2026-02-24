@@ -433,60 +433,47 @@ const createSession = asyncHandler(async (req, res) => {
   // Start async calendar event creation (don't await)
   createCalendarEventsAsync();
 
-  // Send email notifications to both client and therapist (async, don't block response)
-  const sendSessionEmailsAsync = async () => {
+  // Send SMS notifications to both client and therapist (async, don't block response)
+  const sendSessionSMSAsync = async () => {
     try {
+      const { sendSMS, smsTemplates } = require('../utils/smsService');
       const formattedDate = new Date(sessionDate).toLocaleDateString('en-US', {
         weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
       });
       const sessionDuration = duration || 45;
-      const type = sessionType || 'follow-up';
 
-      // Email to client
-      if (clientUser && clientUser.email) {
-        const clientEmail = emailTemplates.sessionBookedClient(
+      // SMS to client
+      if (clientUser && clientUser.phone) {
+        const msg = smsTemplates.sessionBookedClient(
           clientUser.firstName,
           `${therapistUser.firstName} ${therapistUser.lastName}`,
           formattedDate,
           scheduledTime,
-          sessionDuration,
-          type,
-          session.meetingLink
+          sessionDuration
         );
-        await sendEmail({
-          to: clientUser.email,
-          subject: clientEmail.subject,
-          html: clientEmail.html,
-        });
+        await sendSMS(clientUser.phone, msg);
       }
 
-      // Email to therapist
-      if (therapistUser && therapistUser.email) {
-        const therapistEmail = emailTemplates.sessionBookedTherapist(
+      // SMS to therapist
+      if (therapistUser && therapistUser.phone) {
+        const msg = smsTemplates.sessionBookedTherapist(
           therapistUser.firstName,
           `${clientUser.firstName} ${clientUser.lastName}`,
           formattedDate,
           scheduledTime,
-          sessionDuration,
-          type,
-          session.meetingLink
+          sessionDuration
         );
-        await sendEmail({
-          to: therapistUser.email,
-          subject: therapistEmail.subject,
-          html: therapistEmail.html,
-        });
+        await sendSMS(therapistUser.phone, msg);
       }
 
-      console.log(`✅ Session booking emails sent for session ${session._id}`);
+      console.log(`✅ Session booking SMS sent for session ${session._id}`);
     } catch (error) {
-      console.error('Error sending session booking emails:', error);
-      // Don't fail session creation if email sending fails
+      console.error('Error sending session booking SMS:', error);
     }
   };
 
-  // Start async email sending (don't await)
-  sendSessionEmailsAsync();
+  // Start async SMS sending (don't await)
+  sendSessionSMSAsync();
 
   res.status(201).json({
     success: true,
