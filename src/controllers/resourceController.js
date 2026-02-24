@@ -2,6 +2,9 @@ const Resource = require('../models/Resource');
 const Therapist = require('../models/Therapist');
 const User = require('../models/User'); // Import User
 const { asyncHandler } = require('../middlewares/errorHandler');
+const { uploadToBlob } = require('../utils/vercelBlob');
+const { v4: uuidv4 } = require('uuid');
+const path = require('path');
 
 // @desc    Get all resources
 // @route   GET /api/resources
@@ -182,7 +185,13 @@ const createResource = asyncHandler(async (req, res) => {
   }
 
   const isAdmin = req.user.role === 'admin';
-  const fileUrl = `/uploads/resources/${req.file.filename}`;
+
+  // Upload to Vercel Blob
+  const uniqueName = `${uuidv4()}${path.extname(req.file.originalname)}`;
+  const blob = await uploadToBlob(req.file.buffer, `resources/${uniqueName}`, {
+    contentType: req.file.mimetype,
+  });
+  const fileUrl = blob.url;
 
   // Parse arrays if they are strings (from form-data)
   let tags = req.body.tags;
@@ -260,7 +269,11 @@ const updateResource = asyncHandler(async (req, res) => {
   }
 
   if (req.file) {
-    updateData.fileUrl = `/uploads/resources/${req.file.filename}`;
+    const uniqueName = `${uuidv4()}${path.extname(req.file.originalname)}`;
+    const blob = await uploadToBlob(req.file.buffer, `resources/${uniqueName}`, {
+      contentType: req.file.mimetype,
+    });
+    updateData.fileUrl = blob.url;
     updateData.fileSize = req.file.size;
     updateData.fileType = req.file.mimetype;
   }

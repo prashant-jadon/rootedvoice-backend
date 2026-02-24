@@ -1,38 +1,9 @@
 const multer = require('multer');
 const path = require('path');
-const { v4: uuidv4 } = require('uuid');
 
-// Storage configuration
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    // Determine upload folder based on file type
-    let folder = 'uploads/';
-    
-    if (file.fieldname === 'avatar') {
-      folder += 'avatars/';
-    } else if (file.fieldname === 'document') {
-      folder += 'documents/';
-    } else if (file.fieldname === 'spaMembership' || file.fieldname === 'stateRegistration' || 
-               file.fieldname === 'professionalIndemnityInsurance' || file.fieldname === 'workingWithChildrenCheck' ||
-               file.fieldname === 'policeCheck' || file.fieldname === 'academicQualification' ||
-               file.fieldname === 'additionalCredential') {
-      folder += 'documents/compliance/';
-    } else if (file.fieldname === 'attachments') {
-      folder += 'attachments/';
-    } else if (file.fieldname === 'resource') {
-      folder += 'resources/';
-    } else if (file.fieldname === 'recording') {
-      folder += 'recordings/';
-    }
-    
-    cb(null, folder);
-  },
-  filename: (req, file, cb) => {
-    // Generate unique filename
-    const uniqueName = `${uuidv4()}${path.extname(file.originalname)}`;
-    cb(null, uniqueName);
-  }
-});
+// Use memory storage - files are kept as Buffers in req.file.buffer
+// They will be uploaded to Vercel Blob in the controller
+const storage = multer.memoryStorage();
 
 // File filter
 const fileFilter = (req, file, cb) => {
@@ -41,10 +12,10 @@ const fileFilter = (req, file, cb) => {
   const allowedDocTypes = /pdf|doc|docx|txt/;
   const allowedVideoTypes = /mp4|avi|mov|wmv/;
   const allowedAudioTypes = /mp3|wav|ogg/;
-  
+
   const extname = path.extname(file.originalname).toLowerCase();
   const mimetype = file.mimetype;
-  
+
   // Check based on fieldname
   if (file.fieldname === 'avatar') {
     if (allowedImageTypes.test(extname) && mimetype.startsWith('image/')) {
@@ -54,10 +25,10 @@ const fileFilter = (req, file, cb) => {
     if (allowedDocTypes.test(extname) || allowedImageTypes.test(extname)) {
       return cb(null, true);
     }
-  } else if (file.fieldname === 'spaMembership' || file.fieldname === 'stateRegistration' || 
-             file.fieldname === 'professionalIndemnityInsurance' || file.fieldname === 'workingWithChildrenCheck' ||
-             file.fieldname === 'policeCheck' || file.fieldname === 'academicQualification' ||
-             file.fieldname === 'additionalCredential') {
+  } else if (file.fieldname === 'spaMembership' || file.fieldname === 'stateRegistration' ||
+    file.fieldname === 'professionalIndemnityInsurance' || file.fieldname === 'workingWithChildrenCheck' ||
+    file.fieldname === 'policeCheck' || file.fieldname === 'academicQualification' ||
+    file.fieldname === 'additionalCredential') {
     // Compliance documents: PDF, images, or Word docs
     if (allowedDocTypes.test(extname) || allowedImageTypes.test(extname)) {
       return cb(null, true);
@@ -87,7 +58,7 @@ const fileFilter = (req, file, cb) => {
       return cb(null, true);
     }
   }
-  
+
   cb(new Error(`Invalid file type for ${file.fieldname}. File: ${file.originalname}`));
 };
 
@@ -101,4 +72,3 @@ const upload = multer({
 });
 
 module.exports = upload;
-

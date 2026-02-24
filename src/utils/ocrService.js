@@ -19,7 +19,7 @@ const extractTextFromPDF = async (pdfPath) => {
     try {
       const pdfParseModule = await import('pdf-parse');
       PDFParseClass = pdfParseModule.PDFParse;
-      
+
       if (!PDFParseClass || typeof PDFParseClass !== 'function') {
         console.log('PDFParse class not found in pdf-parse module');
         return { text: '', isTextBased: false };
@@ -31,22 +31,22 @@ const extractTextFromPDF = async (pdfPath) => {
 
     // Read PDF file
     const dataBuffer = fs.readFileSync(pdfPath);
-    
+
     // Create PDFParse instance with data buffer
     const parser = new PDFParseClass({
       data: dataBuffer,
       verbosity: 0, // 0 = errors only, 1 = warnings, 2 = info, 3 = debug
     });
-    
+
     // Use getText method to extract text
     const result = await parser.getText();
-    
+
     // Clean up
     await parser.destroy();
-    
+
     // Extract text from result (result should have a .text property)
     const extractedText = result?.text || '';
-    
+
     if (extractedText && extractedText.trim().length > 50) {
       // PDF has extractable text
       console.log(`Successfully extracted ${extractedText.trim().length} characters from PDF`);
@@ -55,7 +55,7 @@ const extractTextFromPDF = async (pdfPath) => {
         isTextBased: true,
       };
     }
-    
+
     // PDF appears to be scanned/image-based or has little text
     console.log('PDF text extraction returned little or no text');
     return {
@@ -110,7 +110,7 @@ const extractTextWithOCR = async (filePath, mimeType, pdfType = null) => {
           // User says it's text-based - extract text directly
           console.log('Processing text-based PDF as specified by user...');
           const pdfResult = await extractTextFromPDF(filePath);
-          
+
           if (pdfResult.text && pdfResult.text.trim().length > 0) {
             console.log(`Successfully extracted ${pdfResult.text.length} characters from text-based PDF`);
             return {
@@ -127,7 +127,7 @@ const extractTextWithOCR = async (filePath, mimeType, pdfType = null) => {
           console.log('Processing image-based PDF as specified by user...');
           // Try to extract text first (some image PDFs might have some text)
           const pdfResult = await extractTextFromPDF(filePath);
-          
+
           if (pdfResult.text && pdfResult.text.trim().length > 0) {
             // Got some text, but user said it's image-based, so confidence is lower
             console.log(`Extracted ${pdfResult.text.length} characters from image-based PDF`);
@@ -136,7 +136,7 @@ const extractTextWithOCR = async (filePath, mimeType, pdfType = null) => {
               confidence: 0.70, // Lower confidence for image-based PDFs
             };
           }
-          
+
           // No text extracted - truly image-based, would need OCR
           return {
             text: '',
@@ -147,7 +147,7 @@ const extractTextWithOCR = async (filePath, mimeType, pdfType = null) => {
           // No type specified - try text extraction first, then fallback
           console.log('PDF type not specified, attempting text extraction first...');
           const pdfResult = await extractTextFromPDF(filePath);
-          
+
           if (pdfResult.isTextBased && pdfResult.text && pdfResult.text.trim().length > 50) {
             console.log(`Successfully extracted ${pdfResult.text.length} characters from text-based PDF`);
             return {
@@ -155,7 +155,7 @@ const extractTextWithOCR = async (filePath, mimeType, pdfType = null) => {
               confidence: 0.95,
             };
           }
-          
+
           // Text extraction failed or returned little text - likely image-based
           console.log('PDF appears to be image-based. User should specify PDF type.');
           return {
@@ -286,22 +286,36 @@ const processDocumentOCR = async (documentData) => {
     };
   }
 
+  let localFilePath = filePath;
+  let tempFileCreated = false;
+
   try {
-    // Use the file path as-is (should be absolute path from multer)
-    let localFilePath = filePath;
-    
-    // If it's a URL, extract the filename and construct local path
+    // If it's a URL (Vercel Blob or other remote), download to a temp file
     if (filePath.startsWith('http://') || filePath.startsWith('https://')) {
+      const os = require('os');
       const urlParts = filePath.split('/');
       const filename = urlParts[urlParts.length - 1];
-      localFilePath = path.join(process.cwd(), 'uploads', 'documents', filename);
+      localFilePath = path.join(os.tmpdir(), `ocr_${Date.now()}_${filename}`);
+
+      console.log(`Downloading file from URL: ${filePath}`);
+      console.log(`Temp file path: ${localFilePath}`);
+
+      const response = await axios({
+        method: 'get',
+        url: filePath,
+        responseType: 'arraybuffer',
+      });
+
+      fs.writeFileSync(localFilePath, Buffer.from(response.data));
+      tempFileCreated = true;
+      console.log(`File downloaded successfully (${response.data.byteLength} bytes)`);
     } else if (!path.isAbsolute(filePath)) {
       // If relative path, make it absolute relative to project root
       localFilePath = path.join(process.cwd(), filePath);
     }
 
     console.log(`Processing OCR for file: ${localFilePath}`);
-    
+
     // Verify file exists
     if (!fs.existsSync(localFilePath)) {
       console.error(`File not found: ${localFilePath}`);
@@ -315,7 +329,7 @@ const processDocumentOCR = async (documentData) => {
 
     // Use cloud OCR if available, otherwise use Tesseract
     const useCloudOCR = process.env.USE_CLOUD_OCR === 'true';
-    
+
     let result;
     if (useCloudOCR) {
       result = await extractTextWithCloudOCR(localFilePath, mimeType, pdfType);
@@ -349,6 +363,16 @@ const processDocumentOCR = async (documentData) => {
       extractedText: '',
       confidence: 0,
     };
+  } finally {
+    // Clean up temp file if we created one
+    if (tempFileCreated && localFilePath) {
+      try {
+        fs.unlinkSync(localFilePath);
+        console.log(`Temp file cleaned up: ${localFilePath}`);
+      } catch (cleanupError) {
+        console.warn('Failed to cleanup temp file:', cleanupError.message);
+      }
+    }
   }
 };
 

@@ -3,13 +3,16 @@ const User = require('../models/User');
 const Client = require('../models/Client');
 const Therapist = require('../models/Therapist');
 const { asyncHandler } = require('../middlewares/errorHandler');
+const { uploadToBlob } = require('../utils/vercelBlob');
+const { v4: uuidv4 } = require('uuid');
+const path = require('path');
 
 // @desc    Get support agent ID (creates one if doesn't exist)
 // @route   GET /api/messages/support-agent
 // @access  Private
 const getSupportAgent = asyncHandler(async (req, res) => {
   // Find or create support agent user
-  let supportUser = await User.findOne({ 
+  let supportUser = await User.findOne({
     role: 'admin',
     email: { $regex: /support/i }
   });
@@ -53,17 +56,17 @@ const getConversations = asyncHandler(async (req, res) => {
         participantId = therapist.userId;
       }
     }
-    
+
     // Also check for support chat (messages with any admin)
-    const supportUser = await User.findOne({ 
+    const supportUser = await User.findOne({
       role: 'admin',
       email: { $regex: /support/i }
     });
-    
+
     // Check if there are messages with any admin user
     const adminUsers = await User.find({ role: 'admin' }).select('_id');
     const adminIds = adminUsers.map(u => u._id);
-    
+
     if (adminIds.length > 0) {
       const supportMessages = await Message.findOne({
         $or: [
@@ -71,7 +74,7 @@ const getConversations = asyncHandler(async (req, res) => {
           { senderId: { $in: adminIds }, receiverId: userId },
         ],
       });
-      
+
       if (supportMessages) {
         // Get all messages with any admin
         const messages = await Message.find({
@@ -113,22 +116,22 @@ const getConversations = asyncHandler(async (req, res) => {
     const therapist = await Therapist.findOne({ userId });
     if (therapist) {
       // Check for support chat first
-      const supportUser = await User.findOne({ 
+      const supportUser = await User.findOne({
         role: 'admin',
         email: { $regex: /support/i }
       });
-      
+
       // Get all admin users (for support chat)
       const adminUsers = await User.find({ role: 'admin' }).select('_id');
       const adminIds = adminUsers.map(u => u._id);
-      
+
       // Get all clients assigned to this therapist
       const clients = await Client.find({ assignedTherapist: therapist._id });
       const clientUserIds = clients.map(c => c.userId);
-      
+
       // Get all unique conversations (including support from any admin)
       const allUserIds = [...clientUserIds, ...adminIds];
-      
+
       const conversations = await Message.aggregate([
         {
           $match: {
@@ -234,26 +237,26 @@ const getMessages = asyncHandler(async (req, res) => {
 
   // Verify authorization (skip for support chat)
   if (!isSupportChat) {
-  if (req.user.role === 'client') {
-    const client = await Client.findOne({ userId });
-    if (client && client.assignedTherapist) {
-      const therapist = await Therapist.findById(client.assignedTherapist);
-      if (therapist && therapist.userId.toString() !== otherUserId) {
-        return res.status(403).json({
-          success: false,
-          message: 'You can only message your assigned therapist',
-        });
+    if (req.user.role === 'client') {
+      const client = await Client.findOne({ userId });
+      if (client && client.assignedTherapist) {
+        const therapist = await Therapist.findById(client.assignedTherapist);
+        if (therapist && therapist.userId.toString() !== otherUserId) {
+          return res.status(403).json({
+            success: false,
+            message: 'You can only message your assigned therapist',
+          });
+        }
       }
-    }
-  } else if (req.user.role === 'therapist') {
-    const therapist = await Therapist.findOne({ userId });
-    if (therapist) {
-      const client = await Client.findOne({ userId: otherUserId });
-      if (client && client.assignedTherapist.toString() !== therapist._id.toString()) {
-        return res.status(403).json({
-          success: false,
-          message: 'You can only message your assigned clients',
-        });
+    } else if (req.user.role === 'therapist') {
+      const therapist = await Therapist.findOne({ userId });
+      if (therapist) {
+        const client = await Client.findOne({ userId: otherUserId });
+        if (client && client.assignedTherapist.toString() !== therapist._id.toString()) {
+          return res.status(403).json({
+            success: false,
+            message: 'You can only message your assigned clients',
+          });
         }
       }
     }
@@ -265,7 +268,7 @@ const getMessages = asyncHandler(async (req, res) => {
     // Get all admin user IDs
     const adminUsers = await User.find({ role: 'admin' }).select('_id');
     const adminIds = adminUsers.map(u => u._id);
-    
+
     messageQuery = {
       $or: [
         { senderId: userId, receiverId: { $in: adminIds } },
@@ -275,11 +278,11 @@ const getMessages = asyncHandler(async (req, res) => {
     };
   } else {
     messageQuery = {
-    $or: [
-      { senderId: userId, receiverId: otherUserId },
-      { senderId: otherUserId, receiverId: userId },
-    ],
-    isDeleted: { $ne: true },
+      $or: [
+        { senderId: userId, receiverId: otherUserId },
+        { senderId: otherUserId, receiverId: userId },
+      ],
+      isDeleted: { $ne: true },
     };
   }
 
@@ -302,14 +305,14 @@ const getMessages = asyncHandler(async (req, res) => {
       { isRead: true, readAt: new Date() }
     );
   } else {
-  await Message.updateMany(
-    {
-      senderId: otherUserId,
-      receiverId: userId,
-      isRead: false,
-    },
-    { isRead: true, readAt: new Date() }
-  );
+    await Message.updateMany(
+      {
+        senderId: otherUserId,
+        receiverId: userId,
+        isRead: false,
+      },
+      { isRead: true, readAt: new Date() }
+    );
   }
 
   res.json({
@@ -324,16 +327,24 @@ const getMessages = asyncHandler(async (req, res) => {
 const sendMessage = asyncHandler(async (req, res) => {
   const { receiverId, content, type = 'text', attachments: attachmentsData } = req.body;
   const senderId = req.user._id;
-  
+
   // Handle file uploads
   let attachments = attachmentsData || [];
   if (req.files && req.files.length > 0) {
-    attachments = req.files.map(file => ({
-      fileName: file.originalname,
-      fileUrl: `${req.protocol}://${req.get('host')}/uploads/attachments/${file.filename}`,
-      fileType: file.mimetype,
-      fileSize: file.size,
-    }));
+    attachments = await Promise.all(
+      req.files.map(async (file) => {
+        const uniqueName = `${uuidv4()}${path.extname(file.originalname)}`;
+        const blob = await uploadToBlob(file.buffer, `attachments/${uniqueName}`, {
+          contentType: file.mimetype,
+        });
+        return {
+          fileName: file.originalname,
+          fileUrl: blob.url,
+          fileType: file.mimetype,
+          fileSize: file.size,
+        };
+      })
+    );
   }
 
   if (!receiverId || !content) {
@@ -391,7 +402,7 @@ const sendMessage = asyncHandler(async (req, res) => {
   const { getIO } = require('../config/socket');
   try {
     const io = getIO();
-    
+
     // Check if receiver is admin - emit to all admins
     if (receiverUser && receiverUser.role === 'admin') {
       // Emit to specific admin user
@@ -400,9 +411,9 @@ const sendMessage = asyncHandler(async (req, res) => {
       io.to('admin:all').emit('new-message', populatedMessage);
     } else {
       // Regular user - emit to specific receiver
-    io.to(`user:${receiverId}`).emit('new-message', populatedMessage);
+      io.to(`user:${receiverId}`).emit('new-message', populatedMessage);
     }
-    
+
     // Also emit to sender for confirmation
     io.to(`user:${senderId}`).emit('message-sent', populatedMessage);
   } catch (error) {
@@ -483,7 +494,7 @@ const deleteMessage = asyncHandler(async (req, res) => {
 // @access  Private/Admin
 const getSupportConversations = asyncHandler(async (req, res) => {
   const adminId = req.user._id; // Use current admin's ID
-  
+
   // Verify admin role
   if (req.user.role !== 'admin') {
     return res.status(403).json({
@@ -537,7 +548,7 @@ const getSupportConversations = asyncHandler(async (req, res) => {
     conversations.map(async (conv) => {
       const user = await User.findById(conv._id)
         .select('firstName lastName avatar email role');
-      
+
       // Get user's role-specific info
       let roleInfo = {};
       if (user.role === 'therapist') {
@@ -575,7 +586,7 @@ const getSupportConversations = asyncHandler(async (req, res) => {
 const getAdminConversation = asyncHandler(async (req, res) => {
   const { userId } = req.params;
   const adminId = req.user._id; // Use current admin's ID
-  
+
   // Verify admin role
   if (req.user.role !== 'admin') {
     return res.status(403).json({
@@ -612,7 +623,7 @@ const getAdminConversation = asyncHandler(async (req, res) => {
   // Get user info (the other participant in the conversation)
   const user = await User.findById(userId)
     .select('firstName lastName avatar email role phone');
-  
+
   let roleInfo = {};
   if (user.role === 'therapist') {
     const therapist = await Therapist.findOne({ userId: user._id })
@@ -661,12 +672,20 @@ const sendAdminReply = asyncHandler(async (req, res) => {
   // Handle file uploads
   let attachments = attachmentsData || [];
   if (req.files && req.files.length > 0) {
-    attachments = req.files.map(file => ({
-      fileName: file.originalname,
-      fileUrl: `${req.protocol}://${req.get('host')}/uploads/attachments/${file.filename}`,
-      fileType: file.mimetype,
-      fileSize: file.size,
-    }));
+    attachments = await Promise.all(
+      req.files.map(async (file) => {
+        const uniqueName = `${uuidv4()}${path.extname(file.originalname)}`;
+        const blob = await uploadToBlob(file.buffer, `attachments/${uniqueName}`, {
+          contentType: file.mimetype,
+        });
+        return {
+          fileName: file.originalname,
+          fileUrl: blob.url,
+          fileType: file.mimetype,
+          fileSize: file.size,
+        };
+      })
+    );
   }
 
   if (!userId || !content) {

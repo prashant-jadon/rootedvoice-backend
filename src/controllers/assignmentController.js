@@ -2,6 +2,9 @@ const Assignment = require('../models/Assignment');
 const Client = require('../models/Client');
 const Therapist = require('../models/Therapist');
 const { asyncHandler } = require('../middlewares/errorHandler');
+const { uploadToBlob } = require('../utils/vercelBlob');
+const { v4: uuidv4 } = require('uuid');
+const path = require('path');
 
 // @desc    Get all assignments for a client
 // @route   GET /api/assignments
@@ -129,14 +132,22 @@ const createAssignment = asyncHandler(async (req, res) => {
 
   // Handle file uploads if any
   let attachmentData = attachments || [];
-  
-  // If files are uploaded via multer, process them
+
+  // If files are uploaded via multer (memoryStorage), upload to Vercel Blob
   if (req.files && req.files.length > 0) {
-    attachmentData = req.files.map(file => ({
-      fileName: file.originalname,
-      fileUrl: `${req.protocol}://${req.get('host')}/uploads/documents/${file.filename}`,
-      fileType: file.mimetype,
-    }));
+    attachmentData = await Promise.all(
+      req.files.map(async (file) => {
+        const uniqueName = `${uuidv4()}${path.extname(file.originalname)}`;
+        const blob = await uploadToBlob(file.buffer, `documents/${uniqueName}`, {
+          contentType: file.mimetype,
+        });
+        return {
+          fileName: file.originalname,
+          fileUrl: blob.url,
+          fileType: file.mimetype,
+        };
+      })
+    );
   }
 
   // Get therapist profile
@@ -224,7 +235,7 @@ const updateAssignment = asyncHandler(async (req, res) => {
     const allowedFields = ['completed', 'completedAt'];
     const updateFields = Object.keys(req.body);
     const invalidFields = updateFields.filter(field => !allowedFields.includes(field));
-    
+
     if (invalidFields.length > 0) {
       return res.status(403).json({
         success: false,

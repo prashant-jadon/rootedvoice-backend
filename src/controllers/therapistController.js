@@ -3,9 +3,9 @@ const User = require('../models/User');
 const Review = require('../models/Review');
 const { asyncHandler } = require('../middlewares/errorHandler');
 const { getRateCapsForUse } = require('./pricingController');
-const upload = require('../config/multer');
+const { uploadToBlob } = require('../utils/vercelBlob');
+const { v4: uuidv4 } = require('uuid');
 const path = require('path');
-const fs = require('fs').promises;
 
 // @desc    Get all therapists
 // @route   GET /api/therapists
@@ -150,11 +150,15 @@ const uploadDocuments = asyncHandler(async (req, res) => {
     'stateLicensures', // Allow uploading array of files
   ];
 
-  // Process uploaded files
+  // Process uploaded files - upload each to Vercel Blob
   for (const docType of documentTypes) {
     if (req.files && req.files[docType]) {
       const file = Array.isArray(req.files[docType]) ? req.files[docType][0] : req.files[docType];
-      uploadedFiles[docType] = file.path;
+      const uniqueName = `${uuidv4()}${path.extname(file.originalname)}`;
+      const blob = await uploadToBlob(file.buffer, `documents/compliance/${uniqueName}`, {
+        contentType: file.mimetype,
+      });
+      uploadedFiles[docType] = blob.url;
     }
   }
 
@@ -195,13 +199,26 @@ const uploadDocuments = asyncHandler(async (req, res) => {
     }
 
     if (Array.isArray(licensesData)) {
-      therapist.complianceDocuments.stateLicensures = licensesData.map((lic, index) => ({
-        licenseNumber: lic.licenseNumber,
-        state: lic.state,
-        expirationDate: lic.expirationDate,
-        documentUrl: licenseFiles[index] ? licenseFiles[index].path : (lic.documentUrl || ''),
-        verified: false
-      }));
+      const processedLicensures = await Promise.all(
+        licensesData.map(async (lic, index) => {
+          let docUrl = lic.documentUrl || '';
+          if (licenseFiles[index]) {
+            const uniqueName = `${uuidv4()}${path.extname(licenseFiles[index].originalname)}`;
+            const blob = await uploadToBlob(licenseFiles[index].buffer, `documents/compliance/${uniqueName}`, {
+              contentType: licenseFiles[index].mimetype,
+            });
+            docUrl = blob.url;
+          }
+          return {
+            licenseNumber: lic.licenseNumber,
+            state: lic.state,
+            expirationDate: lic.expirationDate,
+            documentUrl: docUrl,
+            verified: false,
+          };
+        })
+      );
+      therapist.complianceDocuments.stateLicensures = processedLicensures;
 
       // Update licensedStates derived field
       therapist.licensedStates = [...new Set(licensesData.map(l => l.state))];

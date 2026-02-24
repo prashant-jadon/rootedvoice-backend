@@ -1,16 +1,19 @@
 const Client = require('../models/Client');
 const User = require('../models/User');
 const { asyncHandler } = require('../middlewares/errorHandler');
+const { uploadToBlob } = require('../utils/vercelBlob');
+const { v4: uuidv4 } = require('uuid');
+const path = require('path');
 
 // @desc    Get all clients (for therapist)
 // @route   GET /api/clients
 // @access  Private (Therapist)
 const getClients = asyncHandler(async (req, res) => {
   const Therapist = require('../models/Therapist');
-  
+
   // Get therapist profile
   const therapist = await Therapist.findOne({ userId: req.user._id });
-  
+
   if (!therapist) {
     return res.status(404).json({
       success: false,
@@ -239,8 +242,8 @@ const uploadDocument = asyncHandler(async (req, res) => {
   }
 
   const { type, notes, pdfType } = req.body;
-  
-  // Get file from multer upload
+
+  // Get file from multer upload (memoryStorage - file.buffer)
   const file = req.file;
   if (!file) {
     return res.status(400).json({
@@ -249,10 +252,12 @@ const uploadDocument = asyncHandler(async (req, res) => {
     });
   }
 
-  // Construct file URL for frontend access
-  const fileUrl = `${req.protocol}://${req.get('host')}/uploads/documents/${file.filename}`;
-  // Get local file path (multer saves to file.path)
-  const localFilePath = file.path;
+  // Upload to Vercel Blob
+  const uniqueName = `${uuidv4()}${path.extname(file.originalname)}`;
+  const blob = await uploadToBlob(file.buffer, `documents/${uniqueName}`, {
+    contentType: file.mimetype,
+  });
+  const fileUrl = blob.url;
   const fileName = file.originalname;
   const fileSize = file.size;
   const mimeType = file.mimetype;
@@ -261,7 +266,6 @@ const uploadDocument = asyncHandler(async (req, res) => {
     fileName,
     fileSize,
     mimeType,
-    localFilePath,
     fileUrl,
   });
 
@@ -291,19 +295,13 @@ const uploadDocument = asyncHandler(async (req, res) => {
     try {
       const { processDocumentOCR } = require('../utils/ocrService');
       const { analyzeDocument } = require('../utils/aiDocumentAnalysis');
-      const path = require('path');
-
-      // Get local file path (file is already saved by multer)
-      // Multer provides file.path which is the full path to the saved file
-      const localFilePath = file.path;
 
       console.log(`Starting OCR processing for document: ${documentId}`);
-      console.log(`File path: ${localFilePath}`);
-      console.log(`File exists: ${require('fs').existsSync(localFilePath)}`);
+      console.log(`File URL (Vercel Blob): ${fileUrl}`);
 
-      // Process OCR with local file path
+      // Process OCR with Vercel Blob URL (ocrService handles downloading)
       const ocrResult = await processDocumentOCR({
-        filePath: localFilePath,
+        filePath: fileUrl,
         mimeType: mimeType || 'application/octet-stream',
         pdfType: pdfType, // 'text' or 'image' for PDFs
       });
@@ -336,7 +334,7 @@ const uploadDocument = asyncHandler(async (req, res) => {
           console.log(`Starting AI analysis for document: ${documentId}`);
           try {
             const analysisResult = await analyzeDocument(ocrResult.extractedText, type);
-            
+
             console.log(`AI Analysis Result:`, {
               success: analysisResult.success,
               hasAnalysis: !!analysisResult.analysis,
@@ -661,10 +659,10 @@ const searchDocuments = asyncHandler(async (req, res) => {
     documents = documents.filter(doc => {
       // Search in filename
       if (doc.fileName.toLowerCase().includes(searchLower)) return true;
-      
+
       // Search in extracted text
       if (doc.extractedText && doc.extractedText.toLowerCase().includes(searchLower)) return true;
-      
+
       // Search in AI analysis
       if (doc.aiAnalysis) {
         if (doc.aiAnalysis.summary && doc.aiAnalysis.summary.toLowerCase().includes(searchLower)) return true;
@@ -672,10 +670,10 @@ const searchDocuments = asyncHandler(async (req, res) => {
         if (doc.aiAnalysis.diagnoses && doc.aiAnalysis.diagnoses.some(d => d.toLowerCase().includes(searchLower))) return true;
         if (doc.aiAnalysis.recommendations && doc.aiAnalysis.recommendations.some(r => r.toLowerCase().includes(searchLower))) return true;
       }
-      
+
       // Search in notes
       if (doc.notes && doc.notes.toLowerCase().includes(searchLower)) return true;
-      
+
       return false;
     });
   }
