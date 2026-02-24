@@ -25,7 +25,14 @@ const fileFilter = (req, file, cb) => {
     if (allowedDocTypes.test(extname) || allowedImageTypes.test(extname)) {
       return cb(null, true);
     }
-  } else if (file.fieldname === 'spaMembership' || file.fieldname === 'stateRegistration' ||
+  } else if (
+    // US-based compliance documents (primary)
+    file.fieldname === 'ashaCertification' || file.fieldname === 'stateLicensure' ||
+    file.fieldname === 'stateLicensures' || file.fieldname === 'stateLicense' ||
+    file.fieldname === 'supervisionAgreement' || file.fieldname === 'professionalLiabilityInsurance' ||
+    file.fieldname === 'backgroundCheck' ||
+    // Legacy compliance documents
+    file.fieldname === 'spaMembership' || file.fieldname === 'stateRegistration' ||
     file.fieldname === 'professionalIndemnityInsurance' || file.fieldname === 'workingWithChildrenCheck' ||
     file.fieldname === 'policeCheck' || file.fieldname === 'academicQualification' ||
     file.fieldname === 'additionalCredential') {
