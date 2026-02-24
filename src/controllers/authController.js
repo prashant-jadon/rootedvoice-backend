@@ -320,7 +320,7 @@ const forgotPassword = asyncHandler(async (req, res) => {
   const resetToken = require('crypto').randomBytes(32).toString('hex');
   user.passwordResetToken = resetToken;
   user.passwordResetExpires = Date.now() + 3600000; // 1 hour
-  await user.save();
+  await user.save({ validateBeforeSave: false });
 
   // Create reset URL
   const resetUrl = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`;
