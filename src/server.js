@@ -23,6 +23,7 @@ const app = express();
 connectDB();
 
 // Middleware
+app.set('trust proxy', 1); // Trust first proxy (required for rate limiter behind reverse proxy / Lambda)
 app.use(helmet()); // Security headers
 
 // CORS configuration - allow multiple origins
