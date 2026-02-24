@@ -1087,7 +1087,47 @@ const verifyTherapistCompliance = asyncHandler(async (req, res) => {
   };
 
   // Handle different document types
-  if (documentType === 'spaMembership') {
+  if (documentType === 'ashaCertification') {
+    if (!therapist.complianceDocuments.ashaCertification) {
+      therapist.complianceDocuments.ashaCertification = {};
+    }
+    therapist.complianceDocuments.ashaCertification = {
+      ...therapist.complianceDocuments.ashaCertification,
+      ...verificationData,
+    };
+  } else if (documentType === 'stateLicensure') {
+    if (!therapist.complianceDocuments.stateLicensure) {
+      therapist.complianceDocuments.stateLicensure = {};
+    }
+    therapist.complianceDocuments.stateLicensure = {
+      ...therapist.complianceDocuments.stateLicensure,
+      ...verificationData,
+    };
+  } else if (documentType === 'supervision') {
+    if (!therapist.complianceDocuments.supervision) {
+      therapist.complianceDocuments.supervision = {};
+    }
+    therapist.complianceDocuments.supervision = {
+      ...therapist.complianceDocuments.supervision,
+      ...verificationData,
+    };
+  } else if (documentType === 'professionalLiabilityInsurance') {
+    if (!therapist.complianceDocuments.professionalLiabilityInsurance) {
+      therapist.complianceDocuments.professionalLiabilityInsurance = {};
+    }
+    therapist.complianceDocuments.professionalLiabilityInsurance = {
+      ...therapist.complianceDocuments.professionalLiabilityInsurance,
+      ...verificationData,
+    };
+  } else if (documentType === 'backgroundCheck') {
+    if (!therapist.complianceDocuments.backgroundCheck) {
+      therapist.complianceDocuments.backgroundCheck = {};
+    }
+    therapist.complianceDocuments.backgroundCheck = {
+      ...therapist.complianceDocuments.backgroundCheck,
+      ...verificationData,
+    };
+  } else if (documentType === 'spaMembership') {
     if (!therapist.complianceDocuments.spaMembership) {
       therapist.complianceDocuments.spaMembership = {};
     }
@@ -1188,7 +1228,7 @@ const verifyTherapistCompliance = asyncHandler(async (req, res) => {
   } else {
     return res.status(400).json({
       success: false,
-      message: 'Invalid documentType. Must be one of: spaMembership, stateRegistration, professionalIndemnityInsurance, workingWithChildrenCheck, policeCheck, stateLicense, liabilityInsurance, additionalCredentials',
+      message: 'Invalid documentType. Must be one of: ashaCertification, stateLicensure, stateLicensures, supervision, professionalLiabilityInsurance, backgroundCheck, spaMembership, stateRegistration, professionalIndemnityInsurance, workingWithChildrenCheck, policeCheck, stateLicense, liabilityInsurance, additionalCredentials',
     });
   }
 

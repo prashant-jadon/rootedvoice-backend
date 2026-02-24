@@ -20,6 +20,7 @@ const familyCoachingRoutes = require('./familyCoaching');
 const pushRoutes = require('./push');
 const evaluationRoutes = require('./evaluations');
 const notificationRoutes = require('./notifications');
+const blobRoutes = require('./blob');
 
 // Mount routes
 router.use('/auth', authRoutes);
@@ -39,6 +40,7 @@ router.use('/family-coaching', familyCoachingRoutes);
 router.use('/push', pushRoutes);
 router.use('/evaluations', evaluationRoutes);
 router.use('/notifications', notificationRoutes);
+router.use('/blob', blobRoutes);
 
 // Public routes
 router.get('/public/platform-stats', getPlatformStats);
