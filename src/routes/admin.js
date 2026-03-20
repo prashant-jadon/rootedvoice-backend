@@ -28,6 +28,9 @@ const {
   getAdminActionLogs,
   getPlatformStats,
   updatePlatformStats,
+  sendOnboardingReminder,
+  getAllInquiries,
+  updateInquiryStatus,
 } = require('../controllers/adminController');
 const {
   getPricingTiers,
@@ -68,6 +71,7 @@ router.get('/therapists/incomplete', getIncompleteTherapistProfiles);
 // Client management
 router.get('/clients', getAllClients);
 router.get('/clients/:id', getClientById);
+router.post('/clients/:id/reminder', sendOnboardingReminder);
 
 // Payment management
 router.get('/payments', getAllPayments);
@@ -100,8 +104,11 @@ router.put('/platform-stats', updatePlatformStats);
 router.get('/rate-caps', getRateCaps);
 router.put('/rate-caps', updateRateCaps);
 
+// Inquiries
+router.get('/inquiries', getAllInquiries);
+router.put('/inquiries/:id/status', updateInquiryStatus);
+
 // Admin action logs
 router.get('/action-logs', getAdminActionLogs);
 
 module.exports = router;
-

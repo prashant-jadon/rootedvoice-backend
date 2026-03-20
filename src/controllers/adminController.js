@@ -4,6 +4,7 @@ const Client = require('../models/Client');
 const Payment = require('../models/Payment');
 const Subscription = require('../models/Subscription');
 const Session = require('../models/Session');
+const Evaluation = require('../models/Evaluation');
 const AdminActionLog = require('../models/AdminActionLog');
 const { asyncHandler } = require('../middlewares/errorHandler');
 const { logAdminAction, getClientIp, getUserAgent } = require('../utils/adminLogger');
@@ -218,6 +219,9 @@ const getDashboardStats = asyncHandler(async (req, res) => {
     activeSubscriptions,
     totalRevenue,
     monthlyRevenue,
+    pendingClients,
+    missedEvaluations,
+    upcomingSessions,
   ] = await Promise.all([
     User.countDocuments(),
     Therapist.countDocuments(),
@@ -240,6 +244,9 @@ const getDashboardStats = asyncHandler(async (req, res) => {
       },
       { $group: { _id: null, total: { $sum: '$amount' } } },
     ]),
+    Client.countDocuments({ 'intake.intakeCompleted': { $ne: true } }),
+    Evaluation.countDocuments({ scheduledDate: { $lt: new Date() }, status: { $nin: ['completed', 'recommendations_sent', 'cancelled'] } }),
+    Session.countDocuments({ scheduledDate: { $gte: new Date() }, status: { $in: ['scheduled', 'confirmed'] } }),
   ]);
 
   res.json({
@@ -249,9 +256,12 @@ const getDashboardStats = asyncHandler(async (req, res) => {
         total: totalUsers,
         therapists: totalTherapists,
         clients: totalClients,
+        pendingClients: pendingClients,
       },
       sessions: {
         total: totalSessions,
+        upcoming: upcomingSessions,
+        missedEvaluations: missedEvaluations,
       },
       subscriptions: {
         active: activeSubscriptions,
@@ -264,6 +274,65 @@ const getDashboardStats = asyncHandler(async (req, res) => {
         },
       },
     },
+  });
+});
+
+// @desc    Send onboarding reminder email to client
+// @route   POST /api/admin/clients/:id/reminder
+// @access  Private/Admin
+const sendOnboardingReminder = asyncHandler(async (req, res) => {
+  const client = await Client.findById(req.params.id).populate('userId', 'email firstName lastName phone');
+  
+  if (!client || !client.userId) {
+    return res.status(404).json({
+      success: false,
+      message: 'Client not found',
+    });
+  }
+
+  // Determine drop-off step
+  let step = 'welcome';
+  if (!client.intake?.intakeCompleted) {
+    step = 'questionnaire';
+  } else if (!client.hasPaidEvaluationFee) {
+    step = 'payment';
+  }
+
+  const { sendEmail, emailTemplates } = require('../utils/emailService');
+  const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
+  let resumeLink = `${FRONTEND_URL}/login`;
+
+  if (step === 'questionnaire') {
+    resumeLink = `${FRONTEND_URL}/onboarding`;
+  } else if (step === 'payment') {
+    resumeLink = `${FRONTEND_URL}/evaluation-booking`;
+  }
+
+  await sendEmail({
+    to: client.userId.email,
+    subject: 'Action Required: Complete Your Rooted Voices Setup',
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
+        <div style="background-color: #2d5a27; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0;">
+          <h1 style="margin: 0; font-size: 24px;">Rooted Voices</h1>
+        </div>
+        <div style="padding: 30px; border: 1px solid #eee; border-top: none; border-radius: 0 0 8px 8px;">
+          <h2 style="color: #2d5a27; margin-top: 0;">Hi ${client.userId.firstName},</h2>
+          <p>We noticed you haven't finished setting up your profile yet. We're here to help you get started on your communication journey.</p>
+          <p>Please click the button below to sign in and seamlessly resume your setup process where you left off:</p>
+          <div style="text-align: center; margin: 30px 0;">
+            <a href="${resumeLink}" style="background-color: #2d5a27; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">Resume Setup</a>
+          </div>
+          <p>If you have any questions or need assistance, simply reply to this email. We're happy to help!</p>
+          <p style="margin-top: 30px; margin-bottom: 0;">Best,<br>The Rooted Voices Team</p>
+        </div>
+      </div>
+    `
+  });
+
+  res.json({
+    success: true,
+    message: 'Onboarding reminder sent successfully',
   });
 });
 
@@ -285,18 +354,64 @@ const getAllSessions = asyncHandler(async (req, res) => {
 
   const skip = (parseInt(page) - 1) * parseInt(limit);
 
-  const sessions = await Session.find(query)
-    .populate('therapistId', 'userId')
-    .populate('clientId', 'userId')
-    .sort({ scheduledDate: -1 })
-    .skip(skip)
-    .limit(parseInt(limit));
+  const sessionsPromise = Session.find(query)
+    .populate({
+      path: 'therapistId',
+      populate: { path: 'userId', select: 'firstName lastName email timezone' }
+    })
+    .populate({
+      path: 'clientId',
+      populate: { path: 'userId', select: 'firstName lastName email timezone' }
+    })
+    .lean();
 
-  const total = await Session.countDocuments(query);
+  // Create eval query
+  const evalQuery = {};
+  if (status) evalQuery.status = status;
+  if (startDate || endDate) {
+    evalQuery.scheduledDate = {};
+    if (startDate) evalQuery.scheduledDate.$gte = new Date(startDate);
+    if (endDate) evalQuery.scheduledDate.$lte = new Date(endDate);
+  }
+
+  const evaluationsPromise = Evaluation.find(evalQuery)
+    .populate({
+      path: 'therapistId',
+      populate: { path: 'userId', select: 'firstName lastName email timezone' }
+    })
+    .populate('clientId', 'firstName lastName email timezone')
+    .lean();
+
+  const [dbSessions, dbEvals] = await Promise.all([sessionsPromise, evaluationsPromise]);
+
+  const mappedEvals = dbEvals.map(e => ({
+    _id: e._id,
+    scheduledDate: e.scheduledDate || e.createdAt,
+    scheduledTime: e.scheduledTime || 'TBD',
+    duration: e.duration || 60,
+    status: ['ready_for_meeting', 'meeting_scheduled'].includes(e.status) ? 'scheduled' : 
+            e.status === 'in_progress' ? 'in-progress' :
+            ['completed', 'recommendations_sent'].includes(e.status) ? 'completed' : 
+            ['cancelled', 'no-show'].includes(e.status) ? e.status : 'pending',
+    sessionType: 'evaluation',
+    clientId: { userId: e.clientId }, // Mock structure to match populated session
+    therapistId: e.therapistId, // Already populated with userId
+    price: e.amountPaid || 195,
+    isEvaluation: true
+  }));
+
+  const allSessions = [...dbSessions, ...mappedEvals].sort((a, b) => {
+    const dateA = new Date(a.scheduledDate || 0).getTime();
+    const dateB = new Date(b.scheduledDate || 0).getTime();
+    return dateB - dateA;
+  });
+
+  const total = allSessions.length;
+  const paginatedSessions = allSessions.slice(skip, skip + parseInt(limit));
 
   res.json({
     success: true,
-    data: sessions,
+    data: paginatedSessions,
     pagination: {
       page: parseInt(page),
       limit: parseInt(limit),
@@ -961,6 +1076,12 @@ const updateTherapistStatus = asyncHandler(async (req, res) => {
     therapist.pausedAt = null;
     therapist.pausedBy = null;
     therapist.pauseReason = null;
+    
+    // Auto-approve onboarding stage 2 docs when activated by Admin
+    if (therapist.onboardingStage === 2 || therapist.onboardingStatus === 'PENDING') {
+      therapist.onboardingStage = 3;
+      therapist.onboardingStatus = 'APPROVED';
+    }
   }
 
   const oldStatus = therapist.status;
@@ -1761,23 +1882,53 @@ const getPlatformStats = asyncHandler(async (req, res) => {
 // @access  Private/Admin
 const updatePlatformStats = asyncHandler(async (req, res) => {
   const PlatformStats = require('../models/PlatformStats');
-  const updates = req.body;
-
+  
+  // Try to find existing stats or create new
   let stats = await PlatformStats.findOne();
   if (!stats) {
-    stats = await PlatformStats.create(updates);
-  } else {
-    stats = await PlatformStats.findOneAndUpdate(
-      {},
-      { $set: updates },
-      { new: true, runValidators: true }
-    );
+    stats = new PlatformStats();
+  }
+  
+  // Update fields
+  if (req.body.landingPageStats) {
+    stats.landingPageStats = { ...stats.landingPageStats, ...req.body.landingPageStats };
+  }
+  
+  await stats.save();
+  
+  res.json({
+    success: true,
+    data: stats,
+  });
+});
+
+// @desc    Get all inquiries
+// @route   GET /api/admin/inquiries
+// @access  Private/Admin
+const getAllInquiries = asyncHandler(async (req, res) => {
+  const Inquiry = require('../models/Inquiry');
+  const inquiries = await Inquiry.find().sort('-createdAt');
+
+  res.json({
+    success: true,
+    data: inquiries,
+  });
+});
+
+// @desc    Update inquiry status
+// @route   PUT /api/admin/inquiries/:id
+// @access  Private/Admin
+const updateInquiryStatus = asyncHandler(async (req, res) => {
+  const Inquiry = require('../models/Inquiry');
+  const inquiry = await Inquiry.findByIdAndUpdate(req.params.id, { status: req.body.status }, { new: true, runValidators: true });
+
+  if (!inquiry) {
+    return res.status(404).json({ success: false, message: 'Inquiry not found' });
   }
 
   res.json({
     success: true,
-    message: 'Platform stats updated successfully',
-    data: stats,
+    data: inquiry,
   });
 });
 
@@ -1794,6 +1945,7 @@ module.exports = {
   updateTherapistCredentials,
   bulkUpdateTherapistCredentials,
   getDashboardStats,
+  sendOnboardingReminder,
   getTherapistEarnings,
   getAllTherapistsEarnings,
   updateTherapistStatus,
@@ -1807,5 +1959,6 @@ module.exports = {
   activateUser,
   bulkUserAction,
   getAdminActionLogs,
+  getAllInquiries,
+  updateInquiryStatus,
 };
-

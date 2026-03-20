@@ -44,11 +44,11 @@ const getSessions = asyncHandler(async (req, res) => {
     .populate('therapistId')
     .populate({
       path: 'therapistId',
-      populate: { path: 'userId', select: 'firstName lastName avatar' }
+      populate: { path: 'userId', select: 'firstName lastName avatar timezone' }
     })
     .populate({
       path: 'clientId',
-      populate: { path: 'userId', select: 'firstName lastName avatar' }
+      populate: { path: 'userId', select: 'firstName lastName avatar timezone' }
     })
     .sort({ scheduledDate: -1 })
     .skip(skip)
@@ -90,11 +90,11 @@ const getUpcomingSessions = asyncHandler(async (req, res) => {
   const sessions = await Session.find(filter)
     .populate({
       path: 'therapistId',
-      populate: { path: 'userId', select: 'firstName lastName avatar' }
+      populate: { path: 'userId', select: 'firstName lastName avatar timezone' }
     })
     .populate({
       path: 'clientId',
-      populate: { path: 'userId', select: 'firstName lastName avatar' }
+      populate: { path: 'userId', select: 'firstName lastName avatar timezone' }
     })
     .sort({ scheduledDate: 1 })
     .limit(10);
@@ -112,11 +112,11 @@ const getSession = asyncHandler(async (req, res) => {
   const session = await Session.findById(req.params.id)
     .populate({
       path: 'therapistId',
-      populate: { path: 'userId', select: 'firstName lastName avatar email phone' }
+      populate: { path: 'userId', select: 'firstName lastName avatar phone timezone' }
     })
     .populate({
       path: 'clientId',
-      populate: { path: 'userId', select: 'firstName lastName avatar email phone' }
+      populate: { path: 'userId', select: 'firstName lastName avatar phone timezone' }
     });
 
   if (!session) {
@@ -339,11 +339,11 @@ const createSession = asyncHandler(async (req, res) => {
   const populatedSession = await Session.findById(session._id)
     .populate({
       path: 'therapistId',
-      populate: { path: 'userId', select: 'firstName lastName avatar' }
+      populate: { path: 'userId', select: 'firstName lastName avatar timezone' }
     })
     .populate({
       path: 'clientId',
-      populate: { path: 'userId', select: 'firstName lastName avatar' }
+      populate: { path: 'userId', select: 'firstName lastName avatar timezone' }
     });
 
   // Get remaining sessions for client (if client is booking)
@@ -433,47 +433,86 @@ const createSession = asyncHandler(async (req, res) => {
   // Start async calendar event creation (don't await)
   createCalendarEventsAsync();
 
-  // Send SMS notifications to both client and therapist (async, don't block response)
-  const sendSessionSMSAsync = async () => {
+  // Send SMS and Email notifications to both client and therapist (async, don't block response)
+  const sendSessionNotificationsAsync = async () => {
     try {
       const { sendSMS, smsTemplates } = require('../utils/smsService');
+      const { sendEmail, emailTemplates } = require('../utils/emailService');
       const formattedDate = new Date(sessionDate).toLocaleDateString('en-US', {
         weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
       });
       const sessionDuration = duration || 45;
 
-      // SMS to client
-      if (clientUser && clientUser.phone) {
-        const msg = smsTemplates.sessionBookedClient(
-          clientUser.firstName,
-          `${therapistUser.firstName} ${therapistUser.lastName}`,
-          formattedDate,
-          scheduledTime,
-          sessionDuration
-        );
-        await sendSMS(clientUser.phone, msg);
+      // Notifications to client
+      if (clientUser) {
+        if (clientUser.phone) {
+          const msg = smsTemplates.sessionBookedClient(
+            clientUser.firstName,
+            `${therapistUser.firstName} ${therapistUser.lastName}`,
+            formattedDate,
+            scheduledTime,
+            sessionDuration
+          );
+          await sendSMS(clientUser.phone, msg);
+        }
+        
+        if (clientUser.email) {
+          const emailMsg = emailTemplates.sessionBookedClient(
+            clientUser.firstName,
+            `${therapistUser.firstName} ${therapistUser.lastName}`,
+            formattedDate,
+            scheduledTime,
+            sessionDuration,
+            sessionType,
+            session.meetingLink
+          );
+          await sendEmail({
+            to: clientUser.email,
+            subject: emailMsg.subject,
+            html: emailMsg.html
+          });
+        }
       }
 
-      // SMS to therapist
-      if (therapistUser && therapistUser.phone) {
-        const msg = smsTemplates.sessionBookedTherapist(
-          therapistUser.firstName,
-          `${clientUser.firstName} ${clientUser.lastName}`,
-          formattedDate,
-          scheduledTime,
-          sessionDuration
-        );
-        await sendSMS(therapistUser.phone, msg);
+      // Notifications to therapist
+      if (therapistUser) {
+        if (therapistUser.phone) {
+          const msg = smsTemplates.sessionBookedTherapist(
+            therapistUser.firstName,
+            `${clientUser.firstName} ${clientUser.lastName}`,
+            formattedDate,
+            scheduledTime,
+            sessionDuration
+          );
+          await sendSMS(therapistUser.phone, msg);
+        }
+        
+        if (therapistUser.email) {
+          const emailMsg = emailTemplates.sessionBookedTherapist(
+            therapistUser.firstName,
+            `${clientUser.firstName} ${clientUser.lastName}`,
+            formattedDate,
+            scheduledTime,
+            sessionDuration,
+            sessionType,
+            session.meetingLink
+          );
+          await sendEmail({
+            to: therapistUser.email,
+            subject: emailMsg.subject,
+            html: emailMsg.html
+          });
+        }
       }
 
-      console.log(`✅ Session booking SMS sent for session ${session._id}`);
+      console.log(`✅ Session booking notifications sent for session ${session._id}`);
     } catch (error) {
-      console.error('Error sending session booking SMS:', error);
+      console.error('Error sending session booking notifications:', error);
     }
   };
 
-  // Start async SMS sending (don't await)
-  sendSessionSMSAsync();
+  // Start async notification sending (don't await)
+  sendSessionNotificationsAsync();
 
   res.status(201).json({
     success: true,
@@ -503,11 +542,11 @@ const updateSession = asyncHandler(async (req, res) => {
   )
     .populate({
       path: 'therapistId',
-      populate: { path: 'userId', select: 'firstName lastName avatar' }
+      populate: { path: 'userId', select: 'firstName lastName avatar timezone' }
     })
     .populate({
       path: 'clientId',
-      populate: { path: 'userId', select: 'firstName lastName avatar' }
+      populate: { path: 'userId', select: 'firstName lastName avatar timezone' }
     });
 
   // Update calendar events when session changes
@@ -617,12 +656,12 @@ const startSession = asyncHandler(async (req, res) => {
     .populate('therapistId', 'userId')
     .populate({
       path: 'therapistId',
-      populate: { path: 'userId', select: 'firstName lastName avatar preferredLanguage' }
+      populate: { path: 'userId', select: 'firstName lastName avatar preferredLanguage timezone' }
     })
     .populate('clientId', 'userId')
     .populate({
       path: 'clientId',
-      populate: { path: 'userId', select: 'firstName lastName avatar preferredLanguage' }
+      populate: { path: 'userId', select: 'firstName lastName avatar preferredLanguage timezone' }
     });
 
   if (!session) {

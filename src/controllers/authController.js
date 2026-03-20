@@ -9,7 +9,7 @@ const { sendEmail, emailTemplates } = require('../utils/emailService');
 // @route   POST /api/auth/register
 // @access  Public
 const register = asyncHandler(async (req, res) => {
-  const { email, password, role, firstName, lastName, phone, ...additionalData } = req.body;
+  const { email, password, role, firstName, lastName, phone, timezone, ...additionalData } = req.body;
 
   // Check if user exists
   const userExists = await User.findOne({ email });
@@ -28,6 +28,7 @@ const register = asyncHandler(async (req, res) => {
     firstName,
     lastName,
     phone,
+    timezone,
   });
 
   try {
@@ -205,7 +206,7 @@ const register = asyncHandler(async (req, res) => {
 // @route   POST /api/auth/login
 // @access  Public
 const login = asyncHandler(async (req, res) => {
-  const { email, password } = req.body;
+  const { email, password, timezone } = req.body;
 
   // Validate input
   if (!email || !password) {
@@ -245,6 +246,9 @@ const login = asyncHandler(async (req, res) => {
 
   // Update last login
   user.lastLogin = new Date();
+  if (timezone) {
+    user.timezone = timezone;
+  }
   await user.save({ validateBeforeSave: false });
 
   // Generate tokens

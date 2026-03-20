@@ -23,7 +23,7 @@ const getClients = asyncHandler(async (req, res) => {
 
   // Get clients assigned to this therapist
   const clients = await Client.find({ assignedTherapist: therapist._id })
-    .populate('userId', 'firstName lastName email avatar phone')
+    .populate('userId', 'firstName lastName avatar phone')
     .sort({ createdAt: -1 });
 
   res.json({
@@ -61,9 +61,14 @@ const getClient = asyncHandler(async (req, res) => {
     });
   }
 
+  const clientData = client.toObject();
+  if (req.user.role === 'therapist' && clientData.userId && clientData.userId.email) {
+    delete clientData.userId.email;
+  }
+
   res.json({
     success: true,
-    data: client,
+    data: clientData,
   });
 });
 

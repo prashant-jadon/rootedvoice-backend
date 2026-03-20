@@ -142,6 +142,26 @@ const therapistSchema = new mongoose.Schema({
     default: false,
     comment: 'Indicates if this SLP can supervise SLPA assistants',
   },
+  onboardingStage: {
+    type: Number,
+    default: 1, // 1: Profile created, 2: Documents uploaded, 3: Approved, compliance pending
+  },
+  onboardingStatus: {
+    type: String,
+    enum: ['PENDING', 'APPROVED', 'REJECTED'],
+    default: 'PENDING',
+  },
+  // Stage 3 Compliance Items
+  complianceItems: {
+    icaSigned: { type: Boolean, default: false },
+    icaSignedAt: Date,
+    hipaaSigned: { type: Boolean, default: false },
+    hipaaSignedAt: Date,
+    w9Signed: { type: Boolean, default: false },
+    w9SignedAt: Date,
+    orientationAcknowledged: { type: Boolean, default: false },
+    orientationAcknowledgedAt: Date,
+  },
   // Compliance documents
   complianceDocuments: {
     // ASHA Certification (SLP only) - US-based

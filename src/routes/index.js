@@ -8,7 +8,7 @@ const clientRoutes = require('./clients');
 const sessionRoutes = require('./sessions');
 const subscriptionRoutes = require('./subscriptions');
 const adminRoutes = require('./admin');
-const { getPlatformStats } = require('../controllers/publicController');
+const { getPlatformStats, submitContactForm } = require('../controllers/publicController');
 const stripeRoutes = require('./stripe');
 const assignmentRoutes = require('./assignments');
 const forumRoutes = require('./forum');
@@ -44,6 +44,7 @@ router.use('/blob', blobRoutes);
 
 // Public routes
 router.get('/public/platform-stats', getPlatformStats);
+router.post('/public/contact', submitContactForm);
 
 // Health check
 router.get('/health', (req, res) => {

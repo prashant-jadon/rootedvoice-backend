@@ -74,6 +74,10 @@ const userSchema = new mongoose.Schema({
     default: 'en',
     enum: ['en', 'es', 'fr', 'de', 'zh', 'ja', 'ko', 'ar', 'pt', 'ru', 'it', 'hi', 'nl', 'pl', 'tr', 'vi'],
   },
+  timezone: {
+    type: String,
+    default: 'America/New_York',
+  },
   interfaceLanguage: {
     type: String,
     default: 'en',
@@ -113,12 +117,12 @@ userSchema.index({ email: 1 });
 userSchema.index({ role: 1 });
 
 // Virtual for full name
-userSchema.virtual('fullName').get(function() {
+userSchema.virtual('fullName').get(function () {
   return `${this.firstName} ${this.lastName}`;
 });
 
 // Hash password before saving
-userSchema.pre('save', async function(next) {
+userSchema.pre('save', async function (next) {
   // Only hash if password is modified
   if (!this.isModified('password')) {
     return next();
@@ -134,7 +138,7 @@ userSchema.pre('save', async function(next) {
 });
 
 // Method to compare passwords
-userSchema.methods.comparePassword = async function(candidatePassword) {
+userSchema.methods.comparePassword = async function (candidatePassword) {
   try {
     return await bcrypt.compare(candidatePassword, this.password);
   } catch (error) {
@@ -143,7 +147,7 @@ userSchema.methods.comparePassword = async function(candidatePassword) {
 };
 
 // Method to get public profile
-userSchema.methods.toJSON = function() {
+userSchema.methods.toJSON = function () {
   const user = this.toObject();
   delete user.password;
   delete user.passwordResetToken;

@@ -303,6 +303,12 @@ const selectTherapist = asyncHandler(async (req, res) => {
     const clientUser = await User.findById(userId);
     const client = await Client.findOne({ userId });
 
+    // Update assigned therapist to ensure client shows up on Clinician dashboard
+    if (client && !client.assignedTherapist) {
+        client.assignedTherapist = therapistId;
+        await client.save();
+    }
+
     // Send notification to therapist
     await Notification.create({
         userId: therapist.userId._id,
@@ -600,7 +606,7 @@ const getMyEvaluation = asyncHandler(async (req, res) => {
     }).sort({ createdAt: -1 })
         .populate({
             path: 'therapistId',
-            populate: { path: 'userId', select: 'firstName lastName avatar email' }
+            populate: { path: 'userId', select: 'firstName lastName avatar email timezone' }
         });
 
     if (!evaluation) {
@@ -618,7 +624,7 @@ const getEvaluation = asyncHandler(async (req, res) => {
         .populate('clientId', 'firstName lastName email')
         .populate({
             path: 'therapistId',
-            populate: { path: 'userId', select: 'firstName lastName avatar email' }
+            populate: { path: 'userId', select: 'firstName lastName avatar email timezone' }
         });
 
     if (!evaluation) {
@@ -647,7 +653,7 @@ const getTherapistEvaluationDetails = asyncHandler(async (req, res) => {
     const evaluation = await Evaluation.findById(req.params.id)
         .populate({
             path: 'therapistId',
-            populate: { path: 'userId', select: 'firstName lastName avatar email' }
+            populate: { path: 'userId', select: 'firstName lastName avatar email timezone' }
         });
 
     if (!evaluation) {
@@ -789,6 +795,13 @@ const adminAssignTherapist = asyncHandler(async (req, res) => {
     evaluation.therapistAssignedAt = new Date();
     evaluation.therapistReviewDeadline = addBusinessDays(new Date(), 3);
     await evaluation.save();
+
+    // Update client to reflect new assignment
+    const client = await Client.findOne({ userId: evaluation.clientId });
+    if (client && (!client.assignedTherapist || client.assignedTherapist.toString() !== therapistId.toString())) {
+        client.assignedTherapist = therapistId;
+        await client.save();
+    }
 
     // Notify therapist
     await Notification.create({

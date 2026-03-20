@@ -309,6 +309,19 @@ const uploadDocuments = asyncHandler(async (req, res) => {
     };
   }
 
+  // Auto-progress to Stage 2 if they have core documents
+  if (therapist.onboardingStage === 1) {
+    const hasLicensure = therapist.complianceDocuments?.stateLicensure?.documentUrl || 
+      therapist.complianceDocuments?.stateLicense?.documentUrl || 
+      (therapist.complianceDocuments?.stateLicensures && therapist.complianceDocuments.stateLicensures.length > 0);
+    const hasInsurance = therapist.complianceDocuments?.professionalLiabilityInsurance?.documentUrl;
+    
+    if (hasLicensure && hasInsurance) {
+      therapist.onboardingStage = 2;
+      therapist.onboardingStatus = 'PENDING';
+    }
+  }
+
   await therapist.save();
 
   res.json({
