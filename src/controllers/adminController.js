@@ -1082,6 +1082,7 @@ const updateTherapistStatus = asyncHandler(async (req, res) => {
     }
   }
 
+  const oldStatus = therapist.status;
   therapist.status = status;
   await therapist.save();
 
