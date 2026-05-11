@@ -1479,6 +1479,137 @@ const verifySessionPayment = asyncHandler(async (req, res) => {
   });
 });
 
+// @desc    Create PaymentIntent for in-app evaluation payment (mobile)
+// @route   POST /api/stripe/create-evaluation-payment-intent
+// @access  Private
+const createEvaluationPaymentIntent = asyncHandler(async (req, res) => {
+  const { evaluationId } = req.body;
+  const userId = req.user._id;
+
+  if (!evaluationId) {
+    return res.status(400).json({
+      success: false,
+      message: 'Evaluation ID is required',
+    });
+  }
+
+  const evaluation = await Evaluation.findOne({
+    _id: evaluationId,
+    clientId: userId,
+    status: 'pending_payment',
+  });
+
+  if (!evaluation) {
+    return res.status(404).json({
+      success: false,
+      message: 'Evaluation not found or already paid',
+    });
+  }
+
+  const amount = (evaluation.amountPaid || 195) * 100; // cents
+
+  // Get or create Stripe customer
+  const user = await User.findById(userId);
+  let customerId;
+  
+  // Check if user already has a Stripe customer ID
+  if (user.stripeCustomerId) {
+    customerId = user.stripeCustomerId;
+  } else {
+    const customer = await stripe.customers.create({
+      email: user.email,
+      name: `${user.firstName} ${user.lastName}`,
+      metadata: { userId: userId.toString() },
+    });
+    customerId = customer.id;
+    // Save for future use
+    user.stripeCustomerId = customerId;
+    await user.save({ validateBeforeSave: false });
+  }
+
+  // Create ephemeral key for the customer
+  const ephemeralKey = await stripe.ephemeralKeys.create(
+    { customer: customerId },
+    { apiVersion: '2023-10-16' }
+  );
+
+  // Create payment intent
+  const paymentIntent = await stripe.paymentIntents.create({
+    amount,
+    currency: 'usd',
+    customer: customerId,
+    payment_method_types: ['card'],
+    metadata: {
+      type: 'evaluation_payment',
+      evaluationId: evaluationId.toString(),
+      userId: userId.toString(),
+    },
+  });
+
+  res.json({
+    success: true,
+    data: {
+      clientSecret: paymentIntent.client_secret,
+      ephemeralKey: ephemeralKey.secret,
+      customerId,
+      paymentIntentId: paymentIntent.id,
+    },
+  });
+});
+
+// @desc    Confirm in-app evaluation payment (called after PaymentSheet succeeds)
+// @route   POST /api/stripe/confirm-evaluation-payment
+// @access  Private
+const confirmEvaluationPayment = asyncHandler(async (req, res) => {
+  const { evaluationId, paymentIntentId } = req.body;
+  const userId = req.user._id;
+
+  const evaluation = await Evaluation.findOne({
+    _id: evaluationId,
+    clientId: userId,
+  });
+
+  if (!evaluation) {
+    return res.status(404).json({ success: false, message: 'Evaluation not found' });
+  }
+
+  if (evaluation.status !== 'pending_payment') {
+    return res.json({ success: true, message: 'Already paid', data: evaluation });
+  }
+
+  // Verify payment intent status with Stripe
+  const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+  if (paymentIntent.status !== 'succeeded') {
+    return res.status(400).json({
+      success: false,
+      message: 'Payment not completed',
+    });
+  }
+
+  // Update evaluation
+  evaluation.status = 'paid';
+  evaluation.stripePaymentIntentId = paymentIntentId;
+  await evaluation.save();
+
+  // Set evaluation credit on client
+  const client = await Client.findOne({ userId });
+  if (client) {
+    client.evaluationCredit = {
+      amount: 195,
+      evaluationId: evaluation._id,
+      status: 'available',
+    };
+    client.hasPaidEvaluationFee = true;
+    await client.save();
+  }
+
+  res.json({
+    success: true,
+    message: 'Evaluation payment confirmed. You can now select a therapist.',
+    data: evaluation,
+  });
+});
+
 module.exports = {
   createCheckoutSession,
   createEvaluationCheckout,
@@ -1494,5 +1625,7 @@ module.exports = {
   getStripeConfig,
   createSessionPaymentCheckout,
   verifySessionPayment,
+  createEvaluationPaymentIntent,
+  confirmEvaluationPayment,
 };
 

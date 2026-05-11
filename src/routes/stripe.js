@@ -16,6 +16,8 @@ const {
   getStripeConfig,
   createSessionPaymentCheckout,
   verifySessionPayment,
+  createEvaluationPaymentIntent,
+  confirmEvaluationPayment,
 } = require('../controllers/stripeController');
 const { isAdmin } = require('../middlewares/roleCheck');
 const { sensitiveOpLimiter } = require('../middlewares/rateLimiter');
@@ -40,5 +42,7 @@ router.post('/verify-checkout', verifyCheckoutSession);
 router.post('/refund', isAdmin, sensitiveOpLimiter, refundPayment);
 router.post('/create-session-payment', sensitiveOpLimiter, createSessionPaymentCheckout);
 router.post('/verify-session-payment', verifySessionPayment);
+router.post('/create-evaluation-payment-intent', sensitiveOpLimiter, createEvaluationPaymentIntent);
+router.post('/confirm-evaluation-payment', confirmEvaluationPayment);
 
 module.exports = router;
