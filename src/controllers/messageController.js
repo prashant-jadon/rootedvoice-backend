@@ -354,6 +354,31 @@ const sendMessage = asyncHandler(async (req, res) => {
     });
   }
 
+  // Anti-poaching: detect personal contact info exchange between clients and therapists
+  if (req.user.role === 'client' || req.user.role === 'therapist') {
+    const contactPatterns = [
+      /\b\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b/,                    // US phone numbers
+      /\(\d{3}\)\s*\d{3}[-.\s]?\d{4}/,                          // (xxx) xxx-xxxx
+      /\+\d{1,3}[-.\s]?\d{6,14}/,                               // International phone
+      /[a-zA-Z0-9._%+-]+@(?!rootedvoices\.com)[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/i, // Personal emails (not platform)
+      /(?:my\s+(?:number|phone|cell|email|mail|contact)\s+is)/i,
+      /(?:text\s+me\s+(?:at|on))/i,
+      /(?:email\s+me\s+(?:at|on))/i,
+      /(?:reach\s+me\s+(?:at|on|outside))/i,
+      /(?:contact\s+me\s+(?:directly|outside|privately))/i,
+      /(?:whatsapp|telegram|signal|snapchat|instagram|facebook)\s*(?:me|:|\s+is)/i,
+    ];
+
+    const hasContactInfo = contactPatterns.some(pattern => pattern.test(content));
+    if (hasContactInfo) {
+      return res.status(400).json({
+        success: false,
+        message: 'For your safety and in accordance with platform policy, sharing personal contact information (phone numbers, personal emails, social media) is not permitted. All communication should remain within the Rooted Voices platform.',
+        antiPoachingViolation: true,
+      });
+    }
+  }
+
   // Check if receiver is support/admin (special handling for support chat)
   const receiverUser = await User.findById(receiverId);
   const isSupportChat = receiverUser && receiverUser.role === 'admin';

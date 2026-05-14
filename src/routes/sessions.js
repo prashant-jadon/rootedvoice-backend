@@ -10,6 +10,7 @@ const {
   startSession,
   completeSession,
   saveSoapNote,
+  generateSoapNoteOnDemand,
   saveTranscript,
   getTranscriptTranslation,
 } = require('../controllers/sessionController');
@@ -33,6 +34,7 @@ router.delete('/:id', cancelSession);  // Either role can cancel their own sessi
 router.post('/:id/start', startSession);
 router.post('/:id/complete', isTherapist, completeSession);
 router.post('/:id/soap-note', isTherapist, saveSoapNote);
+router.post('/:id/generate-soap', isTherapist, generateSoapNoteOnDemand);
 
 // Transcript routes
 router.post('/:id/transcript', protect, saveTranscript);

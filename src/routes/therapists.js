@@ -9,6 +9,7 @@ const {
   getTherapistStats,
   uploadDocuments,
   getMyPayments,
+  smartMatch,
 } = require('../controllers/therapistController');
 const { protect, optionalAuth } = require('../middlewares/auth');
 const { isTherapist } = require('../middlewares/roleCheck');
@@ -17,6 +18,9 @@ const { uploadLimiter } = require('../middlewares/rateLimiter');
 
 // Public routes
 router.get('/', optionalAuth, getTherapists);
+
+// Smart matching (client)
+router.post('/smart-match', protect, smartMatch);
 
 // Protected routes - Therapist only
 router.get('/me', protect, isTherapist, getMyProfile);

@@ -937,6 +937,59 @@ const saveSoapNote = asyncHandler(async (req, res) => {
   });
 });
 
+// @desc    Generate AI SOAP note on demand
+// @route   POST /api/sessions/:id/generate-soap
+// @access  Private (Therapist)
+const generateSoapNoteOnDemand = asyncHandler(async (req, res) => {
+  const session = await Session.findById(req.params.id)
+    .populate('therapistId', 'credentials')
+    .populate({
+      path: 'clientId',
+      populate: { path: 'userId', select: 'firstName lastName' }
+    });
+
+  if (!session) {
+    return res.status(404).json({
+      success: false,
+      message: 'Session not found',
+    });
+  }
+
+  const { generateSoapNote } = require('../utils/aiSoapNoteService');
+
+  const clientInfo = {
+    age: null,
+    goals: session.clientId?.currentDiagnoses || [],
+  };
+
+  const soapResult = await generateSoapNote({
+    notes: session.notes || req.body.notes || '',
+    transcript: session.transcript || null,
+    sessionType: session.sessionType,
+    duration: session.duration,
+    clientInfo,
+    therapistInfo: {
+      credentials: session.therapistId?.credentials,
+    },
+  });
+
+  if (!soapResult.success) {
+    return res.status(500).json({
+      success: false,
+      message: soapResult.error || 'Failed to generate SOAP note',
+    });
+  }
+
+  session.soapNote = soapResult.soapNote;
+  await session.save();
+
+  res.json({
+    success: true,
+    message: 'AI SOAP note generated successfully',
+    data: session,
+  });
+});
+
 module.exports = {
   getSessions,
   getUpcomingSessions,
@@ -947,6 +1000,7 @@ module.exports = {
   startSession,
   completeSession,
   saveSoapNote,
+  generateSoapNoteOnDemand,
   saveTranscript,
   getTranscriptTranslation,
 };

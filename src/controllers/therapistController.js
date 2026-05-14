@@ -642,6 +642,158 @@ const getMyPayments = asyncHandler(async (req, res) => {
   });
 });
 
+// @desc    Smart therapist matching based on client needs
+// @route   POST /api/therapists/smart-match
+// @access  Private (Client)
+const smartMatch = asyncHandler(async (req, res) => {
+  const {
+    concerns = [],
+    preferredDay,
+    preferredTime,
+    preferredLanguage,
+    stateOfResidence,
+    clientType,
+    maxRate,
+  } = req.body;
+
+  const filter = { status: 'active' };
+
+  if (stateOfResidence) {
+    filter.$or = [
+      { licensedStates: stateOfResidence },
+      { 'practiceLocations.state': stateOfResidence },
+    ];
+  }
+
+  if (maxRate) {
+    filter.hourlyRate = { $lte: parseFloat(maxRate) };
+  }
+
+  let therapists = await Therapist.find(filter)
+    .populate('userId', 'firstName lastName email avatar')
+    .sort({ rating: -1, totalSessions: -1 });
+
+  // Score each therapist based on matching criteria
+  const scored = therapists.map(t => {
+    let score = 0;
+    const reasons = [];
+
+    // Specialization match (highest weight)
+    if (concerns.length > 0 && t.specializations) {
+      const specMap = {
+        'articulation': 'Articulation & Phonology',
+        'language': 'Language Development',
+        'stuttering': 'Fluency/Stuttering',
+        'fluency': 'Fluency/Stuttering',
+        'voice': 'Voice Therapy',
+        'feeding': 'Feeding & Swallowing',
+        'swallowing': 'Feeding & Swallowing',
+        'aac': 'AAC',
+        'augmentative': 'AAC',
+        'cognitive': 'Cognitive-Communication',
+        'accent': 'Accent Modification',
+        'early intervention': 'Early Intervention',
+        'pediatric': 'Pediatric',
+        'adult': 'Adult',
+        'geriatric': 'Geriatric',
+      };
+
+      const clientConcernsLower = concerns.map(c => c.toLowerCase());
+      let specMatches = 0;
+
+      for (const concern of clientConcernsLower) {
+        for (const [keyword, specName] of Object.entries(specMap)) {
+          if (concern.includes(keyword) && t.specializations.includes(specName)) {
+            specMatches++;
+            break;
+          }
+        }
+        // Direct specialization match
+        for (const spec of t.specializations) {
+          if (spec.toLowerCase().includes(concern) || concern.includes(spec.toLowerCase())) {
+            specMatches++;
+            break;
+          }
+        }
+      }
+
+      if (specMatches > 0) {
+        score += specMatches * 30;
+        reasons.push(`Specializes in ${specMatches} of your concern areas`);
+      }
+    }
+
+    // Client type match
+    if (clientType && t.specializations) {
+      const typeSpec = clientType === 'child' ? 'Pediatric' : 'Adult';
+      if (t.specializations.includes(typeSpec) || t.specializations.includes('Early Intervention')) {
+        score += 20;
+        reasons.push(`Experienced with ${clientType} clients`);
+      }
+    }
+
+    // Availability match
+    if (preferredDay && t.availability) {
+      const dayMatch = t.availability.some(a => a.day === preferredDay);
+      if (dayMatch) {
+        score += 15;
+        reasons.push(`Available on ${preferredDay}`);
+      }
+    }
+
+    if (preferredTime && t.availability) {
+      const timeMatch = t.availability.some(a => {
+        if (!a.startTime || !a.endTime) return false;
+        return a.startTime <= preferredTime && a.endTime >= preferredTime;
+      });
+      if (timeMatch) {
+        score += 10;
+        reasons.push('Available at your preferred time');
+      }
+    }
+
+    // Language match
+    if (preferredLanguage && t.spokenLanguages && t.spokenLanguages.includes(preferredLanguage)) {
+      score += 20;
+      reasons.push(`Speaks ${preferredLanguage}`);
+    }
+
+    // Rating bonus
+    if (t.rating >= 4.5) {
+      score += 15;
+      reasons.push('Highly rated');
+    } else if (t.rating >= 4.0) {
+      score += 10;
+      reasons.push('Well rated');
+    }
+
+    // Experience bonus
+    if (t.totalSessions > 100) {
+      score += 10;
+      reasons.push('Extensive experience');
+    } else if (t.totalSessions > 50) {
+      score += 5;
+      reasons.push('Experienced');
+    }
+
+    return {
+      therapist: t,
+      score,
+      reasons,
+      matchPercentage: Math.min(100, Math.round((score / 120) * 100)),
+    };
+  });
+
+  // Sort by score descending, take top results
+  scored.sort((a, b) => b.score - a.score);
+  const results = scored.slice(0, 10);
+
+  res.json({
+    success: true,
+    data: results,
+  });
+});
+
 module.exports = {
   getTherapists,
   getTherapist,
@@ -651,4 +803,5 @@ module.exports = {
   getTherapistStats,
   uploadDocuments,
   getMyPayments,
+  smartMatch,
 };
