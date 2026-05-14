@@ -42,10 +42,6 @@ const userSchema = new mongoose.Schema({
       auth: String,
     },
   },
-  fcmTokens: [{
-    type: String,
-    trim: true,
-  }],
   avatar: {
     type: String,
     default: null,
@@ -81,10 +77,6 @@ const userSchema = new mongoose.Schema({
   timezone: {
     type: String,
     default: 'America/New_York',
-  },
-  stripeCustomerId: {
-    type: String,
-    default: null,
   },
   interfaceLanguage: {
     type: String,

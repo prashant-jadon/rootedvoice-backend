@@ -385,19 +385,6 @@ const sendMessage = asyncHandler(async (req, res) => {
     }
   }
 
-  // Anti-Poaching System: Prevent sharing of phone numbers or email addresses
-  if (!isSupportChat) {
-    const phoneRegex = /(?:(?:\+?1\s*(?:[.-]\s*)?)?(?:\(\s*([2-9]1[02-9]|[2-9][02-8]1|[2-9][02-8][02-9])\s*\)|([2-9]1[02-9]|[2-9][02-8]1|[2-9][02-8][02-9]))\s*(?:[.-]\s*)?)?([2-9]1[02-9]|[2-9][02-9]1|[2-9][02-9]{2})\s*(?:[.-]\s*)?([0-9]{4})(?:\s*(?:#|x\.?|ext\.?|extension)\s*(\d+))?/g;
-    const emailRegex = /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9_-]+)/gi;
-    
-    if (phoneRegex.test(content) || emailRegex.test(content)) {
-      return res.status(403).json({
-        success: false,
-        message: 'Platform policy prohibits sharing personal contact information (email/phone) in chat.',
-      });
-    }
-  }
-
   const message = await Message.create({
     senderId,
     receiverId,

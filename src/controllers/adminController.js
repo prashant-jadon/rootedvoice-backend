@@ -1067,6 +1067,7 @@ const updateTherapistStatus = asyncHandler(async (req, res) => {
     });
   }
 
+  therapist.status = status;
   if (status === 'paused') {
     therapist.pausedAt = new Date();
     therapist.pausedBy = req.user._id;
@@ -1076,6 +1077,7 @@ const updateTherapistStatus = asyncHandler(async (req, res) => {
     therapist.pausedBy = null;
     therapist.pauseReason = null;
     
+    // Auto-approve onboarding stage 2 docs when activated by Admin
     if (therapist.onboardingStage === 2 || therapist.onboardingStatus === 'PENDING') {
       therapist.onboardingStage = 3;
       therapist.onboardingStatus = 'APPROVED';
@@ -1083,7 +1085,6 @@ const updateTherapistStatus = asyncHandler(async (req, res) => {
   }
 
   const oldStatus = therapist.status;
-  therapist.status = status;
   await therapist.save();
 
   // Log the action
