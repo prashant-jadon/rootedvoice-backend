@@ -20,6 +20,7 @@ const {
   updateTherapistStatus,
   updateTherapistSupervising,
   verifyTherapistCompliance,
+  countersignIca,
   getTherapistActivity,
   getIncompleteTherapistProfiles,
   suspendUser,
@@ -65,6 +66,7 @@ router.get('/therapists/:id/earnings', getTherapistEarnings);
 router.put('/therapists/:id/status', updateTherapistStatus);
 router.put('/therapists/:id/supervising', updateTherapistSupervising);
 router.put('/therapists/:id/verify-compliance', verifyTherapistCompliance);
+router.put('/therapists/:id/countersign-ica', countersignIca);
 router.get('/therapists/:id/activity', getTherapistActivity);
 router.get('/therapists/incomplete', getIncompleteTherapistProfiles);
 

@@ -794,6 +794,56 @@ const smartMatch = asyncHandler(async (req, res) => {
   });
 });
 
+// @desc    Sign ICA agreement (contractor side)
+// @route   POST /api/therapists/sign-ica
+// @access  Private (Therapist)
+const signIca = asyncHandler(async (req, res) => {
+  const userId = req.user._id;
+  const therapist = await Therapist.findOne({ userId });
+
+  if (!therapist) {
+    return res.status(404).json({ success: false, message: 'Therapist profile not found' });
+  }
+
+  if (therapist.complianceItems?.icaSigned) {
+    return res.status(400).json({ success: false, message: 'ICA has already been signed' });
+  }
+
+  const { address, icaVersion } = req.body;
+
+  if (!address || !address.trim()) {
+    return res.status(400).json({ success: false, message: 'Address is required' });
+  }
+
+  if (!req.files?.signature?.[0]) {
+    return res.status(400).json({ success: false, message: 'Signature image is required' });
+  }
+
+  const file = req.files.signature[0];
+  const uniqueName = `${uuidv4()}${path.extname(file.originalname || '.png')}`;
+  const blob = await uploadToBlob(file.buffer, `documents/signatures/${uniqueName}`, {
+    contentType: file.mimetype,
+  });
+
+  therapist.complianceItems = {
+    ...therapist.complianceItems,
+    icaSigned: true,
+    icaSignedAt: new Date(),
+    icaVersion: icaVersion || '1.0',
+    icaContractorAddress: address.trim(),
+    icaContractorSignatureUrl: blob.url,
+    icaEffectiveDate: new Date(),
+  };
+
+  await therapist.save();
+
+  res.json({
+    success: true,
+    message: 'ICA signed successfully',
+    data: await Therapist.findById(therapist._id).populate('userId', 'firstName lastName email'),
+  });
+});
+
 module.exports = {
   getTherapists,
   getTherapist,
@@ -804,4 +854,5 @@ module.exports = {
   uploadDocuments,
   getMyPayments,
   smartMatch,
+  signIca,
 };

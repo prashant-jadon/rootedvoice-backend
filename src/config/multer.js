@@ -17,7 +17,11 @@ const fileFilter = (req, file, cb) => {
   const mimetype = file.mimetype;
 
   // Check based on fieldname
-  if (file.fieldname === 'avatar') {
+  if (file.fieldname === 'signature') {
+    if (allowedImageTypes.test(extname) && mimetype.startsWith('image/')) {
+      return cb(null, true);
+    }
+  } else if (file.fieldname === 'avatar') {
     if (allowedImageTypes.test(extname) && mimetype.startsWith('image/')) {
       return cb(null, true);
     }

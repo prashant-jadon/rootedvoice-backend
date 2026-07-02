@@ -156,6 +156,17 @@ const therapistSchema = new mongoose.Schema({
     icaSigned: { type: Boolean, default: false },
     icaSignedAt: Date,
     icaVersion: String,
+    // Contractor-side ICA fields
+    icaContractorAddress: String,
+    icaContractorSignatureUrl: String,
+    icaEffectiveDate: Date,
+    // Company-side ICA countersign fields
+    icaCountersigned: { type: Boolean, default: false },
+    icaCountersignedAt: Date,
+    icaCountersignedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    icaCompanySignerName: String,
+    icaCompanySignerTitle: String,
+    icaCompanySignatureUrl: String,
     hipaaSigned: { type: Boolean, default: false },
     hipaaSignedAt: Date,
     w9Signed: { type: Boolean, default: false },

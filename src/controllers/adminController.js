@@ -1932,6 +1932,76 @@ const updateInquiryStatus = asyncHandler(async (req, res) => {
   });
 });
 
+// @desc    Countersign ICA (company side)
+// @route   PUT /api/admin/therapists/:id/countersign-ica
+// @access  Private/Admin
+const countersignIca = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { signerName, signerTitle, signatureDataUrl } = req.body;
+
+  if (!signerName || !signerTitle || !signatureDataUrl) {
+    return res.status(400).json({
+      success: false,
+      message: 'Signer name, title, and signature are required',
+    });
+  }
+
+  const therapist = await Therapist.findById(id).populate('userId', 'firstName lastName email');
+  if (!therapist) {
+    return res.status(404).json({ success: false, message: 'Therapist not found' });
+  }
+
+  if (!therapist.complianceItems?.icaSigned) {
+    return res.status(400).json({ success: false, message: 'Therapist has not signed the ICA yet' });
+  }
+
+  if (therapist.complianceItems?.icaCountersigned) {
+    return res.status(400).json({ success: false, message: 'ICA has already been countersigned' });
+  }
+
+  // Store the base64 data URL directly via Vercel Blob
+  const { uploadToBlob } = require('../utils/vercelBlob');
+  const { v4: uuidv4 } = require('uuid');
+  const base64Data = signatureDataUrl.replace(/^data:image\/\w+;base64,/, '');
+  const buffer = Buffer.from(base64Data, 'base64');
+  const blob = await uploadToBlob(buffer, `documents/signatures/company-${uuidv4()}.png`, {
+    contentType: 'image/png',
+  });
+
+  therapist.complianceItems = {
+    ...therapist.complianceItems,
+    icaCountersigned: true,
+    icaCountersignedAt: new Date(),
+    icaCountersignedBy: req.user._id,
+    icaCompanySignerName: signerName.trim(),
+    icaCompanySignerTitle: signerTitle.trim(),
+    icaCompanySignatureUrl: blob.url,
+  };
+
+  await therapist.save();
+
+  const therapistName = therapist.userId
+    ? `${therapist.userId.firstName} ${therapist.userId.lastName}`
+    : 'Unknown';
+
+  await logAdminAction({
+    adminId: req.user._id,
+    action: 'ica_countersigned',
+    targetType: 'therapist',
+    targetId: id,
+    targetName: therapistName,
+    details: { signerName, signerTitle },
+    ipAddress: getClientIp(req),
+    userAgent: getUserAgent(req),
+  });
+
+  res.json({
+    success: true,
+    message: 'ICA countersigned successfully',
+    data: therapist,
+  });
+});
+
 module.exports = {
   getAllUsers,
   getAllTherapists,
@@ -1961,4 +2031,5 @@ module.exports = {
   getAdminActionLogs,
   getAllInquiries,
   updateInquiryStatus,
+  countersignIca,
 };

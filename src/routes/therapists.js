@@ -10,6 +10,7 @@ const {
   uploadDocuments,
   getMyPayments,
   smartMatch,
+  signIca,
 } = require('../controllers/therapistController');
 const { protect, optionalAuth } = require('../middlewares/auth');
 const { isTherapist } = require('../middlewares/roleCheck');
@@ -26,6 +27,9 @@ router.post('/smart-match', protect, smartMatch);
 router.get('/me', protect, isTherapist, getMyProfile);
 router.get('/me/payments', protect, isTherapist, getMyPayments);
 router.post('/', protect, isTherapist, createOrUpdateTherapist);
+router.post('/sign-ica', protect, isTherapist, upload.fields([
+  { name: 'signature', maxCount: 1 },
+]), signIca);
 router.post('/upload-documents', protect, isTherapist, uploadLimiter, upload.fields([
   // US-based fields (primary)
   { name: 'ashaCertification', maxCount: 1 },
