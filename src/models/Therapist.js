@@ -155,6 +155,7 @@ const therapistSchema = new mongoose.Schema({
   complianceItems: {
     icaSigned: { type: Boolean, default: false },
     icaSignedAt: Date,
+    icaVersion: String,
     hipaaSigned: { type: Boolean, default: false },
     hipaaSignedAt: Date,
     w9Signed: { type: Boolean, default: false },
