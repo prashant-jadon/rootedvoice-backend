@@ -95,6 +95,9 @@ if (process.env.NODE_ENV === 'production') {
 // ─── Stripe webhook must be before body parser (needs raw body) ───
 app.use('/api/stripe/webhook', express.raw({ type: 'application/json' }));
 
+// ─── Larger body limit for routes that accept base64 signatures ───
+app.use('/api/admin/therapists', express.json({ limit: '1mb' }));
+
 // ─── Body Parsing (with size limits to prevent payload attacks) ───
 app.use(express.json({ limit: '10kb' }));
 app.use(express.urlencoded({ extended: true, limit: '10kb' }));
