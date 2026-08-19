@@ -513,6 +513,12 @@ const getMyProfile = asyncHandler(async (req, res) => {
     });
   }
 
+  const baseRate = therapist.credentials === 'SLP' ? 45 : 30;
+  if (therapist.hourlyRate < baseRate) {
+    therapist.hourlyRate = baseRate;
+    await therapist.save();
+  }
+
   res.json({
     success: true,
     data: therapist,
