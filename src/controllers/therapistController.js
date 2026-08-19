@@ -844,6 +844,31 @@ const signIca = asyncHandler(async (req, res) => {
   });
 });
 
+// @desc    Get compensation configuration (rate caps + tier info)
+// @route   GET /api/therapists/compensation-config
+// @access  Private (Therapist)
+const getCompensationConfig = asyncHandler(async (req, res) => {
+  const rateCaps = getRateCapsForUse();
+
+  res.json({
+    success: true,
+    data: {
+      SLP: {
+        maxRate: rateCaps.SLP,
+        baseRate: 35,
+        increment: 5,
+        hoursPerTier: 5,
+      },
+      SLPA: {
+        maxRate: rateCaps.SLPA,
+        baseRate: 30,
+        increment: 5,
+        hoursPerTier: 5,
+      },
+    },
+  });
+});
+
 module.exports = {
   getTherapists,
   getTherapist,
@@ -855,4 +880,5 @@ module.exports = {
   getMyPayments,
   smartMatch,
   signIca,
+  getCompensationConfig,
 };

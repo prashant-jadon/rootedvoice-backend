@@ -11,6 +11,7 @@ const {
   getMyPayments,
   smartMatch,
   signIca,
+  getCompensationConfig,
 } = require('../controllers/therapistController');
 const { protect, optionalAuth } = require('../middlewares/auth');
 const { isTherapist } = require('../middlewares/roleCheck');
@@ -24,6 +25,7 @@ router.get('/', optionalAuth, getTherapists);
 router.post('/smart-match', protect, smartMatch);
 
 // Protected routes - Therapist only
+router.get('/compensation-config', protect, isTherapist, getCompensationConfig);
 router.get('/me', protect, isTherapist, getMyProfile);
 router.get('/me/payments', protect, isTherapist, getMyPayments);
 router.post('/', protect, isTherapist, createOrUpdateTherapist);
