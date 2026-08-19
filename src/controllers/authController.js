@@ -50,7 +50,7 @@ const register = asyncHandler(async (req, res) => {
       }
 
       // Get base rates for compensation progression
-      const hourlyRate = additionalData.credentials === 'SLP' ? 35 : 30;
+      const hourlyRate = additionalData.credentials === 'SLP' ? 45 : 30;
 
       // Create therapist with pending status (requires admin verification)
       const therapist = await Therapist.create({

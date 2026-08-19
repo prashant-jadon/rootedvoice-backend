@@ -796,7 +796,7 @@ const getTherapistEarnings = asyncHandler(async (req, res) => {
 
       const credentialType = session.therapistId.credentials || 'SLP';
       const maxRate = rateCaps[credentialType] || rateCaps.SLP;
-      const baseRate = credentialType === 'SLP' ? 35 : 30;
+      const baseRate = credentialType === 'SLP' ? 45 : 30;
 
       // Calculate the current rate.
       let currentRate = baseRate + (5 * Math.floor(accumulatedHours / 5));
@@ -928,7 +928,7 @@ const getAllTherapistsEarnings = asyncHandler(async (req, res) => {
 
           const credentialType = therapist.credentials || 'SLP';
           const maxRate = rateCaps[credentialType] || rateCaps.SLP;
-          const baseRate = credentialType === 'SLP' ? 35 : 30;
+          const baseRate = credentialType === 'SLP' ? 45 : 30;
 
           let currentRate = baseRate + (5 * Math.floor(accumulatedHours / 5));
           currentRate = Math.min(currentRate, maxRate);

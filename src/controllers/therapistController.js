@@ -855,7 +855,7 @@ const getCompensationConfig = asyncHandler(async (req, res) => {
     data: {
       SLP: {
         maxRate: rateCaps.SLP,
-        baseRate: 35,
+        baseRate: 45,
         increment: 5,
         hoursPerTier: 5,
       },
