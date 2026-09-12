@@ -3,7 +3,7 @@ const Therapist = require('../models/Therapist');
 const Client = require('../models/Client');
 const { generateAccessToken, generateRefreshToken } = require('../config/jwt');
 const { asyncHandler } = require('../middlewares/errorHandler');
-const { sendEmail, emailTemplates } = require('../utils/emailService');
+const { sendEmail, emailTemplates, notifyAdminOfSignup } = require('../utils/emailService');
 
 // @desc    Register user
 // @route   POST /api/auth/register
@@ -184,6 +184,27 @@ const register = asyncHandler(async (req, res) => {
     to: user.email,
     ...emailTemplates.welcome(user.firstName),
   });
+
+  // Notify admin inbox of the new signup
+  if (role === 'therapist' || role === 'client') {
+    const extra = role === 'therapist'
+      ? {
+          Credentials: additionalData.credentials,
+          'License #': additionalData.licenseNumber
+            || additionalData.spaMembershipNumber
+            || (additionalData.stateLicensure && additionalData.stateLicensure.licenseNumber)
+            || (additionalData.stateLicensures && additionalData.stateLicensures[0] && additionalData.stateLicensures[0].licenseNumber),
+          'Licensed States': Array.isArray(additionalData.licensedStates) && additionalData.licensedStates.length
+            ? additionalData.licensedStates.join(', ')
+            : (additionalData.stateLicensures || []).map((l) => l.state).filter(Boolean).join(', '),
+        }
+      : {
+          'Date of Birth': additionalData.dateOfBirth,
+          Guardian: additionalData.guardianName,
+          'Guardian Relation': additionalData.guardianRelation,
+        };
+    notifyAdminOfSignup(role, user, extra);
+  }
 
   res.status(201).json({
     success: true,

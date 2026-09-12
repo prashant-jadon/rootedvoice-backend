@@ -8,6 +8,8 @@ if (process.env.SENDGRID_API_KEY) {
 const FROM_EMAIL = process.env.FROM_EMAIL || 'noreply@rootedvoices.com';
 const FROM_NAME = process.env.FROM_NAME || 'Rooted Voices';
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
+const ADMIN_NOTIFICATION_EMAIL = process.env.ADMIN_NOTIFICATION_EMAIL || 'admin@rootedvoicestherapy.com';
+const ADMIN_PANEL_URL = process.env.ADMIN_PANEL_URL || 'http://localhost:5173';
 
 // Send email via SendGrid
 const sendEmail = async ({ to, subject, text, html }) => {
@@ -79,6 +81,32 @@ const baseTemplate = (content) => `
 
 // Email Templates
 const emailTemplates = {
+  // Admin notification: new user signup
+  adminNewSignup: (role, user, extra = {}) => {
+    const roleLabel = role === 'therapist' ? 'Therapist' : role === 'client' ? 'Client' : 'User';
+    const fullName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || '(no name)';
+    const extraRows = Object.entries(extra)
+      .filter(([, v]) => v !== undefined && v !== null && v !== '')
+      .map(([k, v]) => `<p><strong>${k}:</strong> ${v}</p>`)
+      .join('');
+    return {
+      subject: `New ${roleLabel} Signup — ${fullName}`,
+      html: baseTemplate(`
+        <h2>New ${roleLabel} Signup</h2>
+        <p>A new ${roleLabel.toLowerCase()} just registered on Rooted Voices.</p>
+        <div class="info-box">
+          <p><strong>Name:</strong> ${fullName}</p>
+          <p><strong>Email:</strong> ${user.email}</p>
+          ${user.phone ? `<p><strong>Phone:</strong> ${user.phone}</p>` : ''}
+          <p><strong>Role:</strong> ${roleLabel}</p>
+          <p><strong>Registered:</strong> ${new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })} ET</p>
+          ${extraRows}
+        </div>
+        <a href="${ADMIN_PANEL_URL}" class="btn">Open Admin Panel</a>
+      `),
+    };
+  },
+
   // Welcome email
   welcome: (name) => ({
     subject: 'Welcome to Rooted Voices!',
@@ -328,7 +356,19 @@ const emailTemplates = {
   }),
 };
 
+// Fire-and-forget helper to notify the admin inbox of a new signup.
+const notifyAdminOfSignup = (role, user, extra = {}) => {
+  return sendEmail({
+    to: ADMIN_NOTIFICATION_EMAIL,
+    ...emailTemplates.adminNewSignup(role, user, extra),
+  }).catch((err) => {
+    console.error('Admin signup notification failed:', err?.message || err);
+  });
+};
+
 module.exports = {
   sendEmail,
   emailTemplates,
+  notifyAdminOfSignup,
+  ADMIN_NOTIFICATION_EMAIL,
 };
