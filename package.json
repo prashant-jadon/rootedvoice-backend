@@ -10,7 +10,8 @@
     "test": "jest",
     "lint": "eslint src/",
     "create-admin": "node src/scripts/createAdmin.js",
-    "update-role": "node src/scripts/updateUserRole.js"
+    "update-role": "node src/scripts/updateUserRole.js",
+    "test-sendgrid": "node src/scripts/testSendgrid.js"
   },
   "keywords": [
     "healthcare",
