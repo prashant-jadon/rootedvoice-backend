@@ -21,6 +21,7 @@ const {
   updateTherapistSupervising,
   verifyTherapistCompliance,
   countersignIca,
+  inviteTherapistToGusto,
   getTherapistActivity,
   getIncompleteTherapistProfiles,
   suspendUser,
@@ -32,6 +33,9 @@ const {
   sendOnboardingReminder,
   getAllInquiries,
   updateInquiryStatus,
+  getExceptions,
+  impersonateUser,
+  endImpersonation,
 } = require('../controllers/adminController');
 const {
   getPricingTiers,
@@ -67,6 +71,7 @@ router.put('/therapists/:id/status', updateTherapistStatus);
 router.put('/therapists/:id/supervising', updateTherapistSupervising);
 router.put('/therapists/:id/verify-compliance', verifyTherapistCompliance);
 router.put('/therapists/:id/countersign-ica', countersignIca);
+router.post('/therapists/:id/gusto-invite', inviteTherapistToGusto);
 router.get('/therapists/:id/activity', getTherapistActivity);
 router.get('/therapists/incomplete', getIncompleteTherapistProfiles);
 
@@ -112,5 +117,12 @@ router.put('/inquiries/:id/status', updateInquiryStatus);
 
 // Admin action logs
 router.get('/action-logs', getAdminActionLogs);
+
+// Exception dashboard — missing notes, no-shows, failed payments, etc.
+router.get('/exceptions', getExceptions);
+
+// Impersonation ("view-as") — mints a short-lived user token for troubleshooting.
+router.post('/impersonate/:userId', impersonateUser);
+router.post('/impersonate/:userId/end', endImpersonation);
 
 module.exports = router;

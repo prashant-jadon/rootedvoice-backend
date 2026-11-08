@@ -30,8 +30,16 @@ const subscriptionSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['active', 'inactive', 'cancelled', 'pending'],
+    enum: ['active', 'inactive', 'cancelled', 'pending', 'past_due'],
     default: 'pending',
+  },
+  // Timestamp of the most recent failed invoice/renewal payment.
+  // Cleared when a subsequent invoice succeeds.
+  lastPaymentFailureAt: {
+    type: Date,
+  },
+  lastPaymentFailureReason: {
+    type: String,
   },
   startDate: {
     type: Date,

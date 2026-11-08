@@ -8,6 +8,59 @@ const Evaluation = require('../models/Evaluation');
 const AdminActionLog = require('../models/AdminActionLog');
 const { asyncHandler } = require('../middlewares/errorHandler');
 const { logAdminAction, getClientIp, getUserAgent } = require('../utils/adminLogger');
+const gustoService = require('../utils/gustoService');
+
+// Email the Gusto admin that a clinician is ready to be added as a contractor,
+// and persist the result on the therapist record. Never throws: on failure it
+// records the error on the therapist and in the admin audit log so the
+// countersign flow still succeeds.
+const triggerGustoOnboarding = async ({ therapist, adminId, req }) => {
+  const user = therapist.userId; // populated User doc
+  const result = await gustoService.notifyGustoAdmin({ user, therapist });
+
+  const now = new Date();
+  therapist.gustoOnboarding = therapist.gustoOnboarding || {};
+  therapist.gustoOnboarding.lastAttemptAt = now;
+
+  if (result.ok) {
+    therapist.gustoOnboarding.status = 'notified';
+    therapist.gustoOnboarding.notifiedAdminEmail = result.adminEmail;
+    therapist.gustoOnboarding.notifiedAt = now;
+    therapist.gustoOnboarding.lastError = undefined;
+  } else if (result.skipped) {
+    // Not configured in this environment — leave status as-is, note the reason.
+    therapist.gustoOnboarding.lastError = `skipped: ${result.reason}`;
+  } else {
+    therapist.gustoOnboarding.status = 'failed';
+    therapist.gustoOnboarding.lastError = String(result.error).slice(0, 500);
+  }
+
+  await therapist.save();
+
+  if (adminId) {
+    try {
+      await logAdminAction({
+        adminId,
+        action: result.ok ? 'gusto_admin_notified' : 'gusto_admin_notify_failed',
+        targetType: 'therapist',
+        targetId: therapist._id,
+        targetName:
+          therapist.userId && therapist.userId.firstName
+            ? `${therapist.userId.firstName} ${therapist.userId.lastName}`
+            : 'Unknown',
+        details: result.ok
+          ? { adminEmail: result.adminEmail }
+          : { error: result.error || result.reason },
+        ipAddress: req ? getClientIp(req) : undefined,
+        userAgent: req ? getUserAgent(req) : undefined,
+      });
+    } catch (logErr) {
+      console.error('Failed to log Gusto action:', logErr.message);
+    }
+  }
+
+  return result;
+};
 
 // @desc    Get all users
 // @route   GET /api/admin/users
@@ -825,6 +878,26 @@ const getTherapistEarnings = asyncHandler(async (req, res) => {
     }
   }
 
+  // Add flat-rate evaluation compensation (separate from hourly treatment
+  // progression). Pull completed evaluations for this therapist in range.
+  const evaluationDateFilter = {};
+  if (startDate || endDate) {
+    evaluationDateFilter.completedAt = {};
+    if (startDate) evaluationDateFilter.completedAt.$gte = new Date(startDate);
+    if (endDate) evaluationDateFilter.completedAt.$lte = new Date(endDate);
+  }
+  const completedEvaluations = await Evaluation.find({
+    therapistId: id,
+    status: { $in: ['completed', 'recommendations_sent'] },
+    ...evaluationDateFilter,
+  }).select('therapistCompensation completedAt');
+
+  let evaluationEarnings = 0;
+  for (const evalDoc of completedEvaluations) {
+    const amount = evalDoc.therapistCompensation?.amount || 0;
+    evaluationEarnings += Math.round(amount * 100); // cents
+  }
+
   res.json({
     success: true,
     data: {
@@ -835,7 +908,10 @@ const getTherapistEarnings = asyncHandler(async (req, res) => {
       },
       summary: {
         totalHours: parseFloat(totalHours.toFixed(2)),
-        totalEarnings: totalEarnings, // in cents
+        totalEarnings: totalEarnings + evaluationEarnings, // in cents (treatment + evaluations)
+        treatmentEarnings: totalEarnings, // cents, hourly-progression only
+        evaluationEarnings, // cents, flat-rate evaluation pay
+        evaluationCount: completedEvaluations.length,
         totalRevenue: totalRevenue, // in cents
         totalSessions: sessions.length,
       },
@@ -941,13 +1017,34 @@ const getAllTherapistsEarnings = asyncHandler(async (req, res) => {
         }
       }
 
+      // Flat-rate evaluation compensation for this therapist in range.
+      const evalDateFilter = {};
+      if (startDate || endDate) {
+        evalDateFilter.completedAt = {};
+        if (startDate) evalDateFilter.completedAt.$gte = new Date(startDate);
+        if (endDate) evalDateFilter.completedAt.$lte = new Date(endDate);
+      }
+      const evalsDone = await Evaluation.find({
+        therapistId: therapist._id,
+        status: { $in: ['completed', 'recommendations_sent'] },
+        ...evalDateFilter,
+      }).select('therapistCompensation');
+
+      let evaluationEarnings = 0;
+      for (const e of evalsDone) {
+        evaluationEarnings += Math.round((e.therapistCompensation?.amount || 0) * 100);
+      }
+
       return {
         therapistId: therapist._id,
         name: `${therapist.userId?.firstName || ''} ${therapist.userId?.lastName || ''}`.trim(),
         email: therapist.userId?.email || '',
         credentials: therapist.credentials,
         totalHours: parseFloat(totalHours.toFixed(2)),
-        totalEarnings: totalEarnings,
+        totalEarnings: totalEarnings + evaluationEarnings,
+        treatmentEarnings: totalEarnings,
+        evaluationEarnings,
+        evaluationCount: evalsDone.length,
         totalSessions: sessions.length,
       };
     })
@@ -1995,11 +2092,283 @@ const countersignIca = asyncHandler(async (req, res) => {
     userAgent: getUserAgent(req),
   });
 
+  // Email the Gusto admin now that the clinician is fully approved so they can
+  // be added to Gusto manually. The helper never throws — failures are recorded
+  // on the therapist and in the audit log, and admins can retry via
+  // POST /api/admin/therapists/:id/gusto-invite.
+  let gustoResult = null;
+  try {
+    gustoResult = await triggerGustoOnboarding({
+      therapist,
+      adminId: req.user._id,
+      req,
+    });
+  } catch (err) {
+    console.error('Gusto admin notification threw:', err.message);
+  }
+
   res.json({
     success: true,
     message: 'ICA countersigned successfully',
     data: therapist,
+    gusto: gustoResult
+      ? {
+          notified: Boolean(gustoResult.ok),
+          skipped: Boolean(gustoResult.skipped),
+          adminEmail: gustoResult.ok ? gustoResult.adminEmail : undefined,
+          error: gustoResult.ok ? undefined : gustoResult.error || gustoResult.reason,
+        }
+      : null,
   });
+});
+
+// @desc    Retry (or manually trigger) the Gusto admin handoff email.
+//          Useful when the auto-notification on ICA countersign failed, or
+//          when the Gusto admin email was only configured later.
+// @route   POST /api/admin/therapists/:id/gusto-invite
+// @access  Private/Admin
+const inviteTherapistToGusto = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+
+  const therapist = await Therapist.findById(id).populate(
+    'userId',
+    'firstName lastName email',
+  );
+  if (!therapist) {
+    return res.status(404).json({ success: false, message: 'Therapist not found' });
+  }
+
+  if (therapist.onboardingStatus !== 'APPROVED') {
+    return res.status(400).json({
+      success: false,
+      message: 'Therapist must be approved before notifying the Gusto admin',
+    });
+  }
+
+  if (!therapist.complianceItems?.icaCountersigned) {
+    return res.status(400).json({
+      success: false,
+      message: 'ICA must be countersigned before notifying the Gusto admin',
+    });
+  }
+
+  if (therapist.gustoOnboarding?.status === 'notified') {
+    return res.status(400).json({
+      success: false,
+      message: 'The Gusto admin has already been notified about this therapist',
+      data: therapist,
+    });
+  }
+
+  const result = await triggerGustoOnboarding({
+    therapist,
+    adminId: req.user._id,
+    req,
+  });
+
+  if (result.ok) {
+    return res.json({
+      success: true,
+      message: `Gusto admin notified at ${result.adminEmail} — they will add the clinician in Gusto and invite them to enter their own banking and tax info.`,
+      data: therapist,
+    });
+  }
+
+  if (result.skipped) {
+    return res.status(503).json({
+      success: false,
+      message: `Gusto admin email is not configured on this server: ${result.reason}`,
+      data: therapist,
+    });
+  }
+
+  return res.status(502).json({
+    success: false,
+    message: `Failed to send Gusto admin notification: ${result.error}`,
+    data: therapist,
+  });
+});
+
+// @desc    Aggregated "exceptions" view — everything an admin would otherwise
+//          have to check session-by-session: missing attendance, missing SOAP
+//          notes, failed payments, incomplete evaluations, past_due subs.
+// @route   GET /api/admin/exceptions
+// @access  Private (Admin)
+const getExceptions = asyncHandler(async (req, res) => {
+  const now = new Date();
+  const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
+
+  const sessionPopulate = [
+    { path: 'therapistId', populate: { path: 'userId', select: 'firstName lastName email' } },
+    { path: 'clientId', populate: { path: 'userId', select: 'firstName lastName email' } },
+  ];
+
+  const [
+    missingAttendance,
+    missingSoap,
+    failedPayments,
+    stuckEvaluations,
+    pastDueSubscriptions,
+  ] = await Promise.all([
+    Session.find({
+      isMock: { $ne: true },
+      scheduledDate: { $lt: now },
+      status: { $nin: ['cancelled', 'rescheduled'] },
+      $or: [
+        { attendance: { $exists: false } },
+        { 'attendance.status': { $exists: false } },
+        { 'attendance.status': null },
+      ],
+    })
+      .sort({ scheduledDate: -1 })
+      .limit(limit)
+      .populate(sessionPopulate),
+
+    Session.find({
+      isMock: { $ne: true },
+      'attendance.status': 'attended',
+      $or: [
+        { soapNote: { $exists: false } },
+        { 'soapNote.subjective': { $in: [null, ''] } },
+      ],
+    })
+      .sort({ scheduledDate: -1 })
+      .limit(limit)
+      .populate(sessionPopulate),
+
+    Payment.find({ status: 'failed' })
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .populate('clientId', 'firstName lastName email')
+      .populate('therapistId'),
+
+    Evaluation.find({
+      status: { $in: ['pending_payment', 'therapist_reviewing', 'ready_for_meeting'] },
+      createdAt: { $lt: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000) },
+    })
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .populate('clientId', 'firstName lastName email'),
+
+    Subscription.find({ status: 'past_due' })
+      .sort({ lastPaymentFailureAt: -1 })
+      .limit(limit)
+      .populate('userId', 'firstName lastName email'),
+  ]);
+
+  res.json({
+    success: true,
+    data: {
+      missingAttendance,
+      missingSoap,
+      failedPayments,
+      stuckEvaluations,
+      pastDueSubscriptions,
+      counts: {
+        missingAttendance: missingAttendance.length,
+        missingSoap: missingSoap.length,
+        failedPayments: failedPayments.length,
+        stuckEvaluations: stuckEvaluations.length,
+        pastDueSubscriptions: pastDueSubscriptions.length,
+      },
+      generatedAt: now,
+    },
+  });
+});
+
+// @desc    Mint a short-lived impersonation token so admin can see the app as
+//          another user without their password. The token carries an
+//          `impersonatedBy` claim; both frontends read it to show a banner.
+// @route   POST /api/admin/impersonate/:userId
+// @access  Private (Admin)
+const impersonateUser = asyncHandler(async (req, res) => {
+  const { userId } = req.params;
+  const { reason } = req.body || {};
+
+  if (!userId) {
+    return res.status(400).json({ success: false, message: 'userId is required' });
+  }
+  if (String(userId) === String(req.user._id)) {
+    return res.status(400).json({ success: false, message: 'Admins cannot impersonate themselves' });
+  }
+
+  const target = await User.findById(userId).select('-password');
+  if (!target) {
+    return res.status(404).json({ success: false, message: 'Target user not found' });
+  }
+  if (!target.isActive) {
+    return res.status(400).json({ success: false, message: 'Target user is deactivated' });
+  }
+  if (target.role === 'admin') {
+    return res.status(403).json({ success: false, message: 'Admins may not impersonate other admins' });
+  }
+
+  const jwt = require('jsonwebtoken');
+  const { jwtConfig } = require('../config/jwt');
+  const token = jwt.sign(
+    {
+      userId: target._id,
+      role: target.role,
+      type: 'access',
+      impersonatedBy: req.user._id.toString(),
+      impersonatedByEmail: req.user.email,
+      impersonation: true,
+    },
+    jwtConfig.secret,
+    { expiresIn: '30m' }
+  );
+
+  await logAdminAction({
+    adminId: req.user._id,
+    actorRole: 'admin',
+    action: 'impersonation_started',
+    targetType: target.role === 'therapist' ? 'therapist' : 'client',
+    targetId: target._id,
+    targetName: `${target.firstName || ''} ${target.lastName || ''}`.trim() || target.email,
+    details: { targetEmail: target.email, targetRole: target.role },
+    metadata: { reason: reason || null, expiresInMinutes: 30 },
+    ipAddress: getClientIp(req),
+    userAgent: getUserAgent(req),
+  });
+
+  res.json({
+    success: true,
+    message: `Impersonation token issued for ${target.email}`,
+    data: {
+      token,
+      expiresInMinutes: 30,
+      user: {
+        _id: target._id,
+        firstName: target.firstName,
+        lastName: target.lastName,
+        email: target.email,
+        role: target.role,
+      },
+    },
+  });
+});
+
+// @desc    End the current impersonation session (just an audit-log hook; the
+//          admin returns to their own token client-side).
+// @route   POST /api/admin/impersonate/:userId/end
+// @access  Private (Admin)
+const endImpersonation = asyncHandler(async (req, res) => {
+  const { userId } = req.params;
+  const target = await User.findById(userId).select('firstName lastName email role');
+  await logAdminAction({
+    adminId: req.user._id,
+    actorRole: 'admin',
+    action: 'impersonation_ended',
+    targetType: target?.role === 'therapist' ? 'therapist' : 'client',
+    targetId: userId,
+    targetName: target
+      ? (`${target.firstName || ''} ${target.lastName || ''}`.trim() || target.email)
+      : null,
+    details: { targetEmail: target?.email || null },
+    ipAddress: getClientIp(req),
+    userAgent: getUserAgent(req),
+  });
+  res.json({ success: true, message: 'Impersonation ended' });
 });
 
 module.exports = {
@@ -2032,4 +2401,8 @@ module.exports = {
   getAllInquiries,
   updateInquiryStatus,
   countersignIca,
+  inviteTherapistToGusto,
+  getExceptions,
+  impersonateUser,
+  endImpersonation,
 };

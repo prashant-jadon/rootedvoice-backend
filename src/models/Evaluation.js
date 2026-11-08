@@ -89,6 +89,14 @@ const evaluationSchema = new mongoose.Schema({
     completedAt: Date,
     cancelledAt: Date,
     cancellationReason: String,
+    // Flat-rate therapist compensation for completing this evaluation.
+    // Stamped once when the evaluation is marked `completed` so historical
+    // earnings don't shift if the admin updates the rate later.
+    therapistCompensation: {
+        amount: { type: Number, default: 0 },      // dollars
+        credential: String,                        // SLP / SLPA snapshot
+        recordedAt: Date,
+    },
 }, {
     timestamps: true,
 });

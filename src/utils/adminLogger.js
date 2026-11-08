@@ -15,6 +15,7 @@ const AdminActionLog = require('../models/AdminActionLog');
  */
 const logAdminAction = async ({
   adminId,
+  actorRole = 'admin',
   action,
   targetType,
   targetId,
@@ -27,6 +28,7 @@ const logAdminAction = async ({
   try {
     await AdminActionLog.create({
       adminId,
+      actorRole,
       action,
       targetType,
       targetId,
@@ -40,6 +42,24 @@ const logAdminAction = async ({
     // Log error but don't throw - we don't want to break the main action
     console.error('Failed to log admin action:', error);
   }
+};
+
+// Thin wrapper for clinical events: therapists or admins acting on sessions /
+// SOAP / attendance. Keeps call sites short at each call site.
+const logClinicalAction = async (req, { action, targetType, targetId, targetName, details = {}, metadata = {} }) => {
+  if (!req?.user?._id) return;
+  return logAdminAction({
+    adminId: req.user._id,
+    actorRole: req.user.role || 'admin',
+    action,
+    targetType,
+    targetId,
+    targetName,
+    details,
+    metadata,
+    ipAddress: getClientIp(req),
+    userAgent: getUserAgent(req),
+  });
 };
 
 /**
@@ -64,6 +84,7 @@ const getUserAgent = (req) => {
 
 module.exports = {
   logAdminAction,
+  logClinicalAction,
   getClientIp,
   getUserAgent,
 };

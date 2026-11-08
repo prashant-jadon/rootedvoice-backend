@@ -45,6 +45,14 @@ const protect = async (req, res, next) => {
 
       // Attach user to request
       req.user = user;
+      // Surface impersonation metadata so downstream handlers and the audit
+      // log can tell admin-impersonated calls apart from real user activity.
+      if (decoded.impersonation) {
+        req.impersonation = {
+          impersonatedBy: decoded.impersonatedBy,
+          impersonatedByEmail: decoded.impersonatedByEmail,
+        };
+      }
       next();
     } catch (error) {
       return res.status(401).json({

@@ -6,6 +6,7 @@ const { asyncHandler } = require('../middlewares/errorHandler');
 const { v4: uuidv4 } = require('uuid');
 const { getCancellationFee, getRateCapsForUse } = require('./pricingController');
 const { sendEmail, emailTemplates } = require('../utils/emailService');
+const { logClinicalAction } = require('../utils/adminLogger');
 
 // @desc    Get all sessions
 // @route   GET /api/sessions
@@ -195,11 +196,68 @@ const createSession = asyncHandler(async (req, res) => {
     });
   }
 
+  // Enforce therapist onboarding completion before any booking lands on their calendar.
+  // Admins can override by creating bookings on behalf of a therapist still in review.
+  if (req.user.role !== 'admin') {
+    if (therapist.onboardingStatus !== 'APPROVED' || (therapist.onboardingStage || 0) < 3) {
+      return res.status(403).json({
+        success: false,
+        message: 'Therapist has not completed onboarding yet. Bookings are disabled until admin approval.',
+        requiresTherapistOnboarding: true,
+      });
+    }
+    const compliance = therapist.complianceItems || {};
+    if (!compliance.icaSigned || !compliance.icaCountersigned) {
+      return res.status(403).json({
+        success: false,
+        message: 'Therapist has not completed the ICA signing workflow. Bookings are disabled until the ICA is fully executed.',
+        requiresTherapistCompliance: true,
+      });
+    }
+  }
+
   if (!client) {
     return res.status(404).json({
       success: false,
       message: 'Client not found',
     });
+  }
+
+  // Enforce client intake + telehealth consent before their first session.
+  // Admin-created bookings bypass this (admin may be helping onboard a client).
+  if (req.user.role !== 'admin') {
+    const intake = client.intake || {};
+    if (!intake.intakeCompleted) {
+      return res.status(403).json({
+        success: false,
+        message: 'Client intake has not been completed. Please complete the intake form before booking a session.',
+        requiresIntake: true,
+      });
+    }
+    if (!intake.telehealthConsent || !intake.telehealthConsent.consented) {
+      return res.status(403).json({
+        success: false,
+        message: 'Telehealth consent is required before booking a session.',
+        requiresTelehealthConsent: true,
+      });
+    }
+
+    // If a client has an open past_due subscription, booking is paused until
+    // the payment is retried successfully (invoice.payment_succeeded flips it
+    // back to active). Admins can still create bookings on their behalf.
+    const SubscriptionModel = require('../models/Subscription');
+    const pastDueSub = await SubscriptionModel.findOne({
+      userId: client.userId,
+      status: 'past_due',
+    });
+    if (pastDueSub) {
+      return res.status(402).json({
+        success: false,
+        message: 'Your most recent subscription payment failed. Please update your payment method to resume booking.',
+        requiresPayment: true,
+        subscriptionPastDue: true,
+      });
+    }
   }
 
   // Validate date format
@@ -535,6 +593,13 @@ const updateSession = asyncHandler(async (req, res) => {
     });
   }
 
+  const before = {
+    scheduledDate: session.scheduledDate,
+    scheduledTime: session.scheduledTime,
+    duration: session.duration,
+    status: session.status,
+  };
+
   session = await Session.findByIdAndUpdate(
     req.params.id,
     req.body,
@@ -562,6 +627,30 @@ const updateSession = asyncHandler(async (req, res) => {
 
   // Start async calendar event update (don't await)
   updateCalendarEventsAsync();
+
+  const rescheduled =
+    (req.body.scheduledDate && String(before.scheduledDate) !== String(session.scheduledDate)) ||
+    (req.body.scheduledTime && before.scheduledTime !== session.scheduledTime) ||
+    (req.body.duration && before.duration !== session.duration);
+  if (rescheduled) {
+    await logClinicalAction(req, {
+      action: 'session_rescheduled',
+      targetType: 'session',
+      targetId: session._id,
+      details: {
+        before: {
+          scheduledDate: before.scheduledDate,
+          scheduledTime: before.scheduledTime,
+          duration: before.duration,
+        },
+        after: {
+          scheduledDate: session.scheduledDate,
+          scheduledTime: session.scheduledTime,
+          duration: session.duration,
+        },
+      },
+    });
+  }
 
   res.json({
     success: true,
@@ -623,6 +712,19 @@ const cancelSession = asyncHandler(async (req, res) => {
   }
 
   await session.save();
+
+  await logClinicalAction(req, {
+    action: 'session_cancelled',
+    targetType: 'session',
+    targetId: session._id,
+    details: {
+      reason: reason || null,
+      loggedByTherapist: !!isTherapistLogging,
+      cancellationFee: isTherapistLogging && ['SLP', 'SLPA'].includes(credentialType)
+        ? getCancellationFee(credentialType)
+        : null,
+    },
+  });
 
   // Update calendar events to cancelled status
   const updateCalendarEventsAsync = async () => {
@@ -778,6 +880,115 @@ const completeSession = asyncHandler(async (req, res) => {
   });
 });
 
+// @desc    Record session attendance (attended/no-show/cancelled)
+// @route   POST /api/sessions/:id/attendance
+// @access  Private (Therapist)
+const recordAttendance = asyncHandler(async (req, res) => {
+  const { status, notes } = req.body;
+
+  const validStatuses = ['attended', 'no-show', 'cancelled-by-client', 'cancelled-by-therapist', 'late-cancel'];
+  if (!status || !validStatuses.includes(status)) {
+    return res.status(400).json({
+      success: false,
+      message: `Invalid attendance status. Must be one of: ${validStatuses.join(', ')}`,
+    });
+  }
+
+  const session = await Session.findById(req.params.id).populate('therapistId');
+  if (!session) {
+    return res.status(404).json({
+      success: false,
+      message: 'Session not found',
+    });
+  }
+
+  const previousAttendanceStatus = session.attendance?.status;
+
+  session.attendance = {
+    status,
+    notes: notes || '',
+    recordedAt: new Date(),
+    recordedBy: req.user._id,
+  };
+
+  // Mirror to top-level session.status for easier filtering
+  let cancellationFeeOwed = null;
+  if (status === 'attended') {
+    session.status = 'completed';
+    if (!session.actualEndTime) session.actualEndTime = new Date();
+  } else if (status === 'no-show') {
+    session.status = 'no-show';
+  } else if (status === 'cancelled-by-client' || status === 'cancelled-by-therapist' || status === 'late-cancel') {
+    session.status = 'cancelled';
+    session.cancellationReason = notes || status;
+    session.cancelledAt = new Date();
+    session.cancelledBy = req.user._id;
+  }
+
+  // Auto-create cancellation-fee Payment when a therapist logs a billable
+  // non-attendance outcome. Mirrors cancelSession so attendance updates don't
+  // leave admin to reconcile fees manually. Skipped for mock sessions and when
+  // the same outcome has already been logged (idempotency).
+  const feeStatuses = ['no-show', 'cancelled-by-client', 'late-cancel'];
+  const shouldCreateFee =
+    !session.isMock &&
+    req.user.role === 'therapist' &&
+    feeStatuses.includes(status) &&
+    previousAttendanceStatus !== status;
+
+  if (shouldCreateFee) {
+    const therapist = session.therapistId;
+    const credentialType = therapist?.credentials || 'SLPA';
+    if (['SLP', 'SLPA'].includes(credentialType)) {
+      const existingFee = await Payment.findOne({
+        sessionId: session._id,
+        'metadata.type': 'cancellation_fee',
+      });
+      if (!existingFee) {
+        cancellationFeeOwed = getCancellationFee(credentialType);
+        await Payment.create({
+          sessionId: session._id,
+          clientId: session.clientId,
+          therapistId: therapist._id,
+          amount: cancellationFeeOwed * 100,
+          currency: 'USD',
+          paymentMethod: 'other',
+          status: 'pending',
+          metadata: {
+            type: 'cancellation_fee',
+            credentialType,
+            attendanceStatus: status,
+            reason: notes || `Therapist-logged ${status} (${credentialType})`,
+          },
+        });
+        session.price = cancellationFeeOwed;
+        session.paymentStatus = 'pending';
+      }
+    }
+  }
+
+  await session.save();
+
+  await logClinicalAction(req, {
+    action: 'attendance_recorded',
+    targetType: 'session',
+    targetId: session._id,
+    details: {
+      status,
+      previousStatus: previousAttendanceStatus || null,
+      cancellationFee: cancellationFeeOwed,
+    },
+    metadata: { notes: notes || '' },
+  });
+
+  res.json({
+    success: true,
+    message: 'Attendance recorded',
+    data: session,
+    ...(cancellationFeeOwed !== null && { cancellationFee: cancellationFeeOwed }),
+  });
+});
+
 // @desc    Save SOAP note
 // @route   POST /api/sessions/:id/soap-note
 // @access  Private (Therapist)
@@ -917,22 +1128,133 @@ const saveSoapNote = asyncHandler(async (req, res) => {
     });
   }
 
+  // Locked SOAP notes may not be rewritten — direction clients to the
+  // addendum endpoint. This is the compliance guard asked for in item 4.
+  if (session.soapNote?.locked) {
+    return res.status(409).json({
+      success: false,
+      message: 'This SOAP note is finalized and locked. Submit an addendum instead of editing the original note.',
+      soapLocked: true,
+    });
+  }
+
   const { subjective, objective, assessment, plan } = req.body;
 
+  const existing = session.soapNote || {};
   session.soapNote = {
     subjective,
     objective,
     assessment,
     plan,
     generatedAt: new Date(),
-    aiGenerated: false,
+    aiGenerated: existing.aiGenerated || false,
+    locked: false,
+    finalizedAt: existing.finalizedAt,
+    finalizedBy: existing.finalizedBy,
+    addenda: existing.addenda || [],
   };
 
   await session.save();
 
+  await logClinicalAction(req, {
+    action: 'soap_saved',
+    targetType: 'session',
+    targetId: session._id,
+    details: { aiGenerated: false },
+  });
+
   res.json({
     success: true,
     message: 'SOAP note saved successfully',
+    data: session,
+  });
+});
+
+// @desc    Finalize (lock) a SOAP note
+// @route   POST /api/sessions/:id/soap-note/finalize
+// @access  Private (Therapist)
+const finalizeSoapNote = asyncHandler(async (req, res) => {
+  const session = await Session.findById(req.params.id);
+  if (!session) {
+    return res.status(404).json({ success: false, message: 'Session not found' });
+  }
+
+  const soap = session.soapNote;
+  if (!soap || !(soap.subjective || soap.objective || soap.assessment || soap.plan)) {
+    return res.status(400).json({
+      success: false,
+      message: 'Cannot finalize an empty SOAP note. Save the note content first.',
+    });
+  }
+  if (soap.locked) {
+    return res.status(409).json({
+      success: false,
+      message: 'This SOAP note is already finalized.',
+      soapLocked: true,
+    });
+  }
+
+  session.soapNote.locked = true;
+  session.soapNote.finalizedAt = new Date();
+  session.soapNote.finalizedBy = req.user._id;
+  await session.save();
+
+  await logClinicalAction(req, {
+    action: 'soap_finalized',
+    targetType: 'session',
+    targetId: session._id,
+    details: { finalizedAt: session.soapNote.finalizedAt },
+  });
+
+  res.json({
+    success: true,
+    message: 'SOAP note finalized and locked.',
+    data: session,
+  });
+});
+
+// @desc    Append an addendum to a locked SOAP note
+// @route   POST /api/sessions/:id/soap-note/addendum
+// @access  Private (Therapist, Admin)
+const addSoapAddendum = asyncHandler(async (req, res) => {
+  const { body } = req.body;
+  if (!body || !body.trim()) {
+    return res.status(400).json({ success: false, message: 'Addendum body is required.' });
+  }
+  if (body.length > 10000) {
+    return res.status(400).json({ success: false, message: 'Addendum must be 10,000 characters or fewer.' });
+  }
+
+  const session = await Session.findById(req.params.id);
+  if (!session) {
+    return res.status(404).json({ success: false, message: 'Session not found' });
+  }
+  if (!session.soapNote?.locked) {
+    return res.status(400).json({
+      success: false,
+      message: 'Addenda can only be added to finalized notes. Edit the note directly if it is not finalized yet.',
+    });
+  }
+
+  session.soapNote.addenda = session.soapNote.addenda || [];
+  session.soapNote.addenda.push({
+    body: body.trim(),
+    authorId: req.user._id,
+    authorRole: req.user.role === 'admin' ? 'admin' : 'therapist',
+    createdAt: new Date(),
+  });
+  await session.save();
+
+  await logClinicalAction(req, {
+    action: 'soap_addendum_added',
+    targetType: 'session',
+    targetId: session._id,
+    details: { addendaCount: session.soapNote.addenda.length },
+  });
+
+  res.json({
+    success: true,
+    message: 'Addendum added.',
     data: session,
   });
 });
@@ -990,6 +1312,68 @@ const generateSoapNoteOnDemand = asyncHandler(async (req, res) => {
   });
 });
 
+// @desc    List outstanding documentation for the current therapist
+// @route   GET /api/sessions/outstanding
+// @access  Private (Therapist)
+const getOutstandingDocumentation = asyncHandler(async (req, res) => {
+  if (req.user.role !== 'therapist') {
+    return res.status(403).json({ success: false, message: 'Therapist only' });
+  }
+  const therapist = await Therapist.findOne({ userId: req.user._id });
+  if (!therapist) {
+    return res.json({ success: true, data: { missingAttendance: [], missingSoap: [] } });
+  }
+
+  const now = new Date();
+  const baseFilter = { therapistId: therapist._id, isMock: { $ne: true } };
+
+  // Past sessions where attendance was never recorded.
+  const missingAttendance = await Session.find({
+    ...baseFilter,
+    scheduledDate: { $lt: now },
+    $or: [
+      { attendance: { $exists: false } },
+      { 'attendance.status': { $exists: false } },
+      { 'attendance.status': null },
+    ],
+    status: { $nin: ['cancelled', 'rescheduled'] },
+  })
+    .sort({ scheduledDate: -1 })
+    .limit(50)
+    .populate({
+      path: 'clientId',
+      populate: { path: 'userId', select: 'firstName lastName' },
+    });
+
+  // Attended sessions with no SOAP narrative written yet.
+  const missingSoap = await Session.find({
+    ...baseFilter,
+    'attendance.status': 'attended',
+    $or: [
+      { soapNote: { $exists: false } },
+      { 'soapNote.subjective': { $in: [null, ''] }, 'soapNote.objective': { $in: [null, ''] } },
+    ],
+  })
+    .sort({ scheduledDate: -1 })
+    .limit(50)
+    .populate({
+      path: 'clientId',
+      populate: { path: 'userId', select: 'firstName lastName' },
+    });
+
+  res.json({
+    success: true,
+    data: {
+      missingAttendance,
+      missingSoap,
+      counts: {
+        missingAttendance: missingAttendance.length,
+        missingSoap: missingSoap.length,
+      },
+    },
+  });
+});
+
 module.exports = {
   getSessions,
   getUpcomingSessions,
@@ -1000,8 +1384,12 @@ module.exports = {
   startSession,
   completeSession,
   saveSoapNote,
+  finalizeSoapNote,
+  addSoapAddendum,
   generateSoapNoteOnDemand,
   saveTranscript,
   getTranscriptTranslation,
+  recordAttendance,
+  getOutstandingDocumentation,
 };
 

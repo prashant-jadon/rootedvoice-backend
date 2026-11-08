@@ -545,6 +545,21 @@ const completeEvaluation = asyncHandler(async (req, res) => {
         sentBy: req.user._id,
     };
     evaluation.resourceLibraryAccessGranted = grantResourceAccess !== false;
+
+    // Stamp flat-rate therapist compensation ($85 for SLP by default) so the
+    // amount is frozen at completion time and future rate changes don't
+    // retroactively alter historical earnings. Treatment-session hourly
+    // progression is unaffected — evaluation pay is tracked separately.
+    if (!evaluation.therapistCompensation || !evaluation.therapistCompensation.recordedAt) {
+        const { getEvaluationCompensationForUse } = require('./pricingController');
+        const credential = therapist.credentials || 'SLP';
+        evaluation.therapistCompensation = {
+            amount: getEvaluationCompensationForUse(credential),
+            credential,
+            recordedAt: new Date(),
+        };
+    }
+
     await evaluation.save();
 
     // Update client profile with recommendations

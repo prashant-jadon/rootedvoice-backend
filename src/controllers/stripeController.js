@@ -781,12 +781,184 @@ const handleWebhook = asyncHandler(async (req, res) => {
       await handleChargeRefunded(refundedCharge);
       break;
 
+    case 'invoice.payment_failed':
+      await handleInvoicePaymentFailed(event.data.object);
+      break;
+
+    case 'invoice.payment_succeeded':
+      await handleInvoicePaymentSucceeded(event.data.object);
+      break;
+
+    case 'customer.subscription.updated':
+      await handleSubscriptionUpdated(event.data.object);
+      break;
+
+    case 'customer.subscription.deleted':
+      await handleSubscriptionDeleted(event.data.object);
+      break;
+
     default:
       console.log(`Unhandled event type ${event.type}`);
   }
 
   res.json({ received: true });
 });
+
+// Helper: notify a user by in-app notification + email, best-effort.
+async function notifyBillingIssue(userId, { title, message, link, emailSubject, emailHtml }) {
+  try {
+    await Notification.create({ userId, type: 'billing-issue', title, message, link });
+  } catch (err) {
+    console.error('notifyBillingIssue: Notification.create failed', err.message);
+  }
+  if (emailSubject && emailHtml) {
+    try {
+      const user = await User.findById(userId);
+      if (user?.email) {
+        await sendEmail({ to: user.email, subject: emailSubject, html: emailHtml });
+      }
+    } catch (err) {
+      console.error('notifyBillingIssue: sendEmail failed', err.message);
+    }
+  }
+}
+
+// Helper: Handle invoice.payment_failed — mark subscription past_due,
+// create a failed Payment record, and notify the client. Booking gates
+// read `subscription.status === 'active'`, so flipping to past_due is
+// what pauses access.
+async function handleInvoicePaymentFailed(invoice) {
+  const stripeSubscriptionId = invoice.subscription;
+  if (!stripeSubscriptionId) return;
+
+  const subscription = await Subscription.findOne({ stripeSubscriptionId });
+  if (!subscription) {
+    console.warn(`invoice.payment_failed: no local subscription for ${stripeSubscriptionId}`);
+    return;
+  }
+
+  const amount = invoice.amount_due || invoice.amount_remaining || subscription.price * 100;
+  const reason = invoice.last_finalization_error?.message
+    || invoice.billing_reason
+    || 'invoice_payment_failed';
+
+  subscription.status = 'past_due';
+  subscription.lastPaymentFailureAt = new Date();
+  subscription.lastPaymentFailureReason = reason;
+  await subscription.save();
+
+  await Payment.create({
+    clientId: subscription.userId,
+    amount,
+    currency: (invoice.currency || 'usd').toUpperCase(),
+    paymentMethod: 'card',
+    status: 'failed',
+    stripePaymentIntentId: invoice.payment_intent || undefined,
+    metadata: {
+      type: 'subscription_renewal_failed',
+      subscriptionId: subscription._id.toString(),
+      stripeInvoiceId: invoice.id,
+      reason,
+    },
+  });
+
+  await notifyBillingIssue(subscription.userId, {
+    title: 'Payment failed',
+    message: `Your ${subscription.tierName} subscription renewal failed. Please update your payment method to keep booking sessions.`,
+    link: '/client-dashboard?tab=billing',
+    emailSubject: 'Rooted Voices: subscription payment failed',
+    emailHtml: `<p>We weren't able to process your most recent ${subscription.tierName} payment.</p>
+      <p>Session booking is paused until the payment is retried successfully. You can update your card from your dashboard.</p>
+      <p><strong>Reason:</strong> ${reason}</p>`,
+  });
+
+  console.log(`⚠️ Subscription ${subscription._id} moved to past_due`);
+}
+
+// Helper: Handle invoice.payment_succeeded — recover a past_due subscription
+// when the next invoice clears, and advance nextBillingDate.
+async function handleInvoicePaymentSucceeded(invoice) {
+  const stripeSubscriptionId = invoice.subscription;
+  if (!stripeSubscriptionId) return;
+
+  const subscription = await Subscription.findOne({ stripeSubscriptionId });
+  if (!subscription) return;
+
+  const wasPastDue = subscription.status === 'past_due';
+  subscription.status = 'active';
+  subscription.lastPaymentFailureAt = undefined;
+  subscription.lastPaymentFailureReason = undefined;
+
+  // Advance next billing date based on the paid invoice's period_end if present.
+  if (invoice.lines?.data?.[0]?.period?.end) {
+    subscription.nextBillingDate = new Date(invoice.lines.data[0].period.end * 1000);
+  }
+  await subscription.save();
+
+  if (wasPastDue) {
+    await notifyBillingIssue(subscription.userId, {
+      title: 'Payment recovered',
+      message: `Your ${subscription.tierName} subscription is active again. You can book sessions.`,
+      link: '/client-dashboard',
+    });
+    console.log(`✅ Subscription ${subscription._id} recovered from past_due`);
+  }
+}
+
+// Helper: Handle customer.subscription.updated — mirror Stripe-side status
+// changes (past_due, unpaid, canceled, active) onto the local record.
+async function handleSubscriptionUpdated(stripeSub) {
+  const subscription = await Subscription.findOne({ stripeSubscriptionId: stripeSub.id });
+  if (!subscription) return;
+
+  const statusMap = {
+    active: 'active',
+    trialing: 'active',
+    past_due: 'past_due',
+    unpaid: 'past_due',
+    canceled: 'cancelled',
+    incomplete: 'pending',
+    incomplete_expired: 'cancelled',
+    paused: 'inactive',
+  };
+  const mapped = statusMap[stripeSub.status];
+  if (mapped && subscription.status !== mapped) {
+    subscription.status = mapped;
+    if (mapped === 'cancelled' && !subscription.cancelledAt) {
+      subscription.cancelledAt = new Date();
+      subscription.cancellationReason = subscription.cancellationReason || `stripe:${stripeSub.status}`;
+    }
+    if (stripeSub.cancel_at_period_end) {
+      subscription.autoRenew = false;
+    }
+    if (stripeSub.current_period_end) {
+      subscription.nextBillingDate = new Date(stripeSub.current_period_end * 1000);
+    }
+    await subscription.save();
+    console.log(`ℹ️ Subscription ${subscription._id} status synced to ${mapped}`);
+  }
+}
+
+// Helper: Handle customer.subscription.deleted — subscription is fully gone
+// on Stripe's side, so revoke access locally.
+async function handleSubscriptionDeleted(stripeSub) {
+  const subscription = await Subscription.findOne({ stripeSubscriptionId: stripeSub.id });
+  if (!subscription) return;
+  if (subscription.status === 'cancelled') return;
+
+  subscription.status = 'cancelled';
+  subscription.cancelledAt = new Date();
+  subscription.cancellationReason = subscription.cancellationReason || 'stripe_subscription_deleted';
+  subscription.endDate = subscription.endDate || new Date();
+  await subscription.save();
+
+  await notifyBillingIssue(subscription.userId, {
+    title: 'Subscription ended',
+    message: `Your ${subscription.tierName} subscription has ended. Resubscribe to continue booking sessions.`,
+    link: '/subscriptions',
+  });
+  console.log(`❌ Subscription ${subscription._id} cancelled via Stripe`);
+}
 
 // Helper: Handle checkout session completed
 async function handleCheckoutCompleted(session) {

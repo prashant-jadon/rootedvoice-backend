@@ -1,5 +1,6 @@
 const { asyncHandler } = require('../middlewares/errorHandler');
 const PricingTier = require('../models/PricingTier');
+const PlatformConfig = require('../models/PlatformConfig');
 
 // Initial seed data (fallback/default)
 const DEFAULT_PRICING_TIERS = {
@@ -125,16 +126,66 @@ let PAYMENT_SPLIT = {
   },
 };
 
-// Rate caps configuration (hourly rate maximums)
-let RATE_CAPS = {
-  SLP: 75, // SLP (Full License) max hourly rate: $75
-  SLPA: 55, // SLPA (Assistant) max hourly rate: $55
+// In-memory cache of the admin-editable platform rate configuration.
+// Hydrated from the PlatformConfig singleton in MongoDB on module load
+// and refreshed after every write — so synchronous helpers like
+// getRateCapsForUse() stay sync, but edits persist across restarts
+// (including Vercel serverless cold starts).
+let RATE_CAPS = { SLP: 75, SLPA: 55 };
+let CANCELLATION_FEES = { SLP: 20, SLPA: 15 };
+// Flat-rate therapist compensation for a completed diagnostic evaluation.
+// Paid per completed eval (intake review + up to 60-min assessment +
+// report finalization) and SEPARATE from the hourly treatment progression
+// — treatment pay tiers do NOT include evaluation hours.
+let EVALUATION_COMPENSATION = { SLP: 85, SLPA: 0 };
+
+const applyPlatformConfigToCache = (cfg) => {
+  if (!cfg) return;
+  if (cfg.rateCaps) {
+    RATE_CAPS = { SLP: cfg.rateCaps.SLP ?? 75, SLPA: cfg.rateCaps.SLPA ?? 55 };
+  }
+  if (cfg.cancellationFees) {
+    CANCELLATION_FEES = {
+      SLP: cfg.cancellationFees.SLP ?? 20,
+      SLPA: cfg.cancellationFees.SLPA ?? 15,
+    };
+  }
+  if (cfg.evaluationCompensation) {
+    EVALUATION_COMPENSATION = {
+      SLP: cfg.evaluationCompensation.SLP ?? 85,
+      SLPA: cfg.evaluationCompensation.SLPA ?? 0,
+    };
+  }
 };
 
-// Cancellation fees by credential type (flat rate when patient cancels)
-let CANCELLATION_FEES = {
-  SLPA: 15, // $15 flat rate for SLPA cancellations
-  SLP: 20,  // $20 flat rate for SLP cancellations
+// Hydrate on module load (fire-and-forget). If the DB is unreachable at
+// boot, the cache stays at its defaults and the first write will persist
+// them. A failed refresh never crashes the server.
+const hydratePlatformConfigFromDb = async () => {
+  try {
+    const cfg = await PlatformConfig.getConfig();
+    applyPlatformConfigToCache(cfg);
+  } catch (err) {
+    console.error('PlatformConfig hydrate failed:', err.message);
+  }
+};
+hydratePlatformConfigFromDb();
+
+// Write current cache snapshot to the DB singleton. Called after every
+// successful admin update so the next cold start sees the new values.
+const persistPlatformConfig = async () => {
+  await PlatformConfig.findOneAndUpdate(
+    { singletonKey: 'platform' },
+    {
+      $set: {
+        rateCaps: { ...RATE_CAPS },
+        cancellationFees: { ...CANCELLATION_FEES },
+        evaluationCompensation: { ...EVALUATION_COMPENSATION },
+      },
+      $setOnInsert: { singletonKey: 'platform' },
+    },
+    { upsert: true, new: true, setDefaultsOnInsert: true },
+  );
 };
 
 // Helper: Convert DB array to Object format for backward compatibility
@@ -316,12 +367,23 @@ const updatePaymentSplit = asyncHandler(async (req, res) => {
 // @route   GET /api/admin/rate-caps
 // @access  Private/Admin
 const getRateCaps = asyncHandler(async (req, res) => {
+  // Refresh the cache from the DB singleton on every admin read, so the
+  // admin panel always shows the authoritative values even if a cold
+  // start fired this request before the module-load hydrate completed.
+  try {
+    const cfg = await PlatformConfig.getConfig();
+    applyPlatformConfigToCache(cfg);
+  } catch (err) {
+    console.error('PlatformConfig read failed, serving cached values:', err.message);
+  }
+
   res.json({
     success: true,
     data: {
       SLP: RATE_CAPS.SLP,
       SLPA: RATE_CAPS.SLPA,
       cancellationFees: CANCELLATION_FEES,
+      evaluationCompensation: EVALUATION_COMPENSATION,
     },
   });
 });
@@ -330,7 +392,14 @@ const getRateCaps = asyncHandler(async (req, res) => {
 // @route   PUT /api/admin/rate-caps
 // @access  Private/Admin
 const updateRateCaps = asyncHandler(async (req, res) => {
-  const { SLP, SLPA, slpCancellationFee, slpaCancellationFee } = req.body;
+  const {
+    SLP,
+    SLPA,
+    slpCancellationFee,
+    slpaCancellationFee,
+    slpEvaluationCompensation,
+    slpaEvaluationCompensation,
+  } = req.body;
 
   if (SLP !== undefined) {
     if (SLP < 0 || SLP > 200) {
@@ -372,6 +441,46 @@ const updateRateCaps = asyncHandler(async (req, res) => {
     CANCELLATION_FEES.SLPA = slpaCancellationFee;
   }
 
+  if (slpEvaluationCompensation !== undefined) {
+    if (slpEvaluationCompensation < 0 || slpEvaluationCompensation > 500) {
+      return res.status(400).json({
+        success: false,
+        message: 'SLP evaluation compensation must be between 0 and 500',
+      });
+    }
+    EVALUATION_COMPENSATION.SLP = slpEvaluationCompensation;
+  }
+
+  if (slpaEvaluationCompensation !== undefined) {
+    if (slpaEvaluationCompensation < 0 || slpaEvaluationCompensation > 500) {
+      return res.status(400).json({
+        success: false,
+        message: 'SLPA evaluation compensation must be between 0 and 500',
+      });
+    }
+    EVALUATION_COMPENSATION.SLPA = slpaEvaluationCompensation;
+  }
+
+  // Persist to MongoDB so the new values survive restarts / cold starts.
+  // On DB failure we keep the in-memory change but surface the error so
+  // the admin knows the edit won't outlive this process.
+  try {
+    await persistPlatformConfig();
+  } catch (err) {
+    console.error('PlatformConfig persist failed:', err.message);
+    return res.status(500).json({
+      success: false,
+      message:
+        'Rates updated in memory but failed to save to the database — they will reset on next server restart. Please retry.',
+      data: {
+        SLP: RATE_CAPS.SLP,
+        SLPA: RATE_CAPS.SLPA,
+        cancellationFees: CANCELLATION_FEES,
+        evaluationCompensation: EVALUATION_COMPENSATION,
+      },
+    });
+  }
+
   res.json({
     success: true,
     message: 'Rate caps updated successfully',
@@ -379,6 +488,7 @@ const updateRateCaps = asyncHandler(async (req, res) => {
       SLP: RATE_CAPS.SLP,
       SLPA: RATE_CAPS.SLPA,
       cancellationFees: CANCELLATION_FEES,
+      evaluationCompensation: EVALUATION_COMPENSATION,
     },
   });
 });
@@ -409,6 +519,15 @@ const getCancellationFee = (credentialType = 'SLPA') => {
   return CANCELLATION_FEES[credentialType] || CANCELLATION_FEES.SLPA;
 };
 
+// Export evaluation compensation for use in other controllers.
+// Returns the flat-rate dollar amount paid to a therapist of this credential
+// for a completed diagnostic evaluation (0 if the credential doesn't perform
+// evaluations, e.g. SLPA).
+const getEvaluationCompensationForUse = (credentialType = 'SLP') => {
+  const value = EVALUATION_COMPENSATION[credentialType];
+  return typeof value === 'number' ? value : 0;
+};
+
 module.exports = {
   getPricingTiers,
   updatePricingTier,
@@ -422,5 +541,6 @@ module.exports = {
   getPaymentSplitForUse,
   getRateCapsForUse,
   getCancellationFee,
+  getEvaluationCompensationForUse,
 };
 

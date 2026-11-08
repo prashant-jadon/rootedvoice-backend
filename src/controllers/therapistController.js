@@ -2,7 +2,7 @@ const Therapist = require('../models/Therapist');
 const User = require('../models/User');
 const Review = require('../models/Review');
 const { asyncHandler } = require('../middlewares/errorHandler');
-const { getRateCapsForUse } = require('./pricingController');
+const { getRateCapsForUse, getEvaluationCompensationForUse } = require('./pricingController');
 const { uploadToBlob } = require('../utils/vercelBlob');
 const { v4: uuidv4 } = require('uuid');
 const path = require('path');
@@ -864,12 +864,16 @@ const getCompensationConfig = asyncHandler(async (req, res) => {
         baseRate: 45,
         increment: 5,
         hoursPerTier: 5,
+        // Flat rate paid per completed diagnostic evaluation, separate
+        // from and NOT counted toward the hourly treatment progression.
+        evaluationFlatRate: getEvaluationCompensationForUse('SLP'),
       },
       SLPA: {
         maxRate: rateCaps.SLPA,
         baseRate: 30,
         increment: 5,
         hoursPerTier: 5,
+        evaluationFlatRate: getEvaluationCompensationForUse('SLPA'),
       },
     },
   });

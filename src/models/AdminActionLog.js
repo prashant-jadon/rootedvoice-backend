@@ -7,6 +7,14 @@ const adminActionLogSchema = new mongoose.Schema({
     required: true,
     index: true,
   },
+  // Role of the actor at the time of the action (admin by default; also
+  // 'therapist' for clinical events like attendance_recorded / soap_saved).
+  actorRole: {
+    type: String,
+    enum: ['admin', 'therapist', 'client', 'system'],
+    default: 'admin',
+    index: true,
+  },
   action: {
     type: String,
     required: true,
@@ -30,13 +38,30 @@ const adminActionLogSchema = new mongoose.Schema({
       'pricing_updated',
       'payment_split_updated',
       'rate_caps_updated',
+      // Session / clinical actions (actor may be therapist or admin)
+      'attendance_recorded',
+      'soap_saved',
+      'soap_finalized',
+      'soap_addendum_added',
+      'session_cancelled',
+      'session_rescheduled',
+      // Admin impersonation
+      'impersonation_started',
+      'impersonation_ended',
+      // ICA / Gusto onboarding
+      'ica_countersigned',
+      'gusto_admin_notified',
+      'gusto_admin_notify_failed',
+      // Legacy values kept for historical rows (no longer written).
+      'gusto_invite_sent',
+      'gusto_invite_failed',
     ],
     index: true,
   },
   targetType: {
     type: String,
     required: true,
-    enum: ['therapist', 'user', 'client', 'system', 'document'],
+    enum: ['therapist', 'user', 'client', 'system', 'document', 'session', 'payment'],
   },
   targetId: {
     type: mongoose.Schema.Types.ObjectId,

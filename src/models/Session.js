@@ -64,6 +64,38 @@ const sessionSchema = new mongoose.Schema({
       type: Boolean,
       default: false,
     },
+    // Finalization / locking. Once `locked` is true the four narrative
+    // fields may not be edited — further changes must be appended as
+    // addenda (see below). Enforced in sessionController.saveSoapNote.
+    locked: {
+      type: Boolean,
+      default: false,
+    },
+    finalizedAt: Date,
+    finalizedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+    },
+    addenda: [{
+      body: {
+        type: String,
+        required: true,
+        maxlength: 10000,
+      },
+      authorId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+        required: true,
+      },
+      authorRole: {
+        type: String,
+        enum: ['therapist', 'admin'],
+      },
+      createdAt: {
+        type: Date,
+        default: Date.now,
+      },
+    }],
   },
   recording: {
     url: String,
@@ -127,6 +159,25 @@ const sessionSchema = new mongoose.Schema({
     default: false,
   },
   reminder45mSent: {
+    type: Boolean,
+    default: false,
+  },
+  attendance: {
+    status: {
+      type: String,
+      enum: ['attended', 'no-show', 'cancelled-by-client', 'cancelled-by-therapist', 'late-cancel'],
+    },
+    notes: {
+      type: String,
+      maxlength: 2000,
+    },
+    recordedAt: Date,
+    recordedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+    },
+  },
+  isMock: {
     type: Boolean,
     default: false,
   },

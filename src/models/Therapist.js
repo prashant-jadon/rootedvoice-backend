@@ -347,6 +347,9 @@ const therapistSchema = new mongoose.Schema({
     default: false,
   },
   // Banking details for payouts (US-based)
+  // DEPRECATED: Rooted Voices no longer collects bank account numbers.
+  // Direct deposit is set up by the clinician directly in Gusto after approval.
+  // Kept for historical records only; new signups do not write this field.
   bankDetails: {
     accountName: String,
     bankName: String,
@@ -358,6 +361,26 @@ const therapistSchema = new mongoose.Schema({
       type: String,
       trim: true,
     },
+  },
+  // Gusto contractor onboarding handoff — set when admin countersigns the ICA.
+  // Rooted Voices does NOT integrate with the Gusto API. On countersign we
+  // email the designated Gusto admin with the clinician's name + email so the
+  // admin can add them as a contractor in Gusto and invite them to self-enter
+  // bank/tax info. All sensitive data stays inside Gusto.
+  gustoOnboarding: {
+    status: {
+      type: String,
+      // 'notified'  — Gusto admin email was sent successfully.
+      // 'failed'    — email send failed; admin can retry.
+      // 'not_notified' — initial state (ICA not yet countersigned, or never attempted).
+      enum: ['not_notified', 'notified', 'failed'],
+      default: 'not_notified',
+    },
+    // Email address the handoff notification was sent to (for audit).
+    notifiedAdminEmail: String,
+    notifiedAt: Date,
+    lastAttemptAt: Date,
+    lastError: String,
   },
 }, {
   timestamps: true,
