@@ -1,17 +1,17 @@
 /* eslint-disable no-console */
 /**
- * Sends test emails through SendGrid using the app's emailService.
+ * Sends test emails through Resend using the app's emailService.
  *
  * Usage:
- *   node src/scripts/testSendgrid.js                     # sends both signup notifications to ADMIN_NOTIFICATION_EMAIL
- *   node src/scripts/testSendgrid.js you@example.com     # overrides the recipient
- *   node src/scripts/testSendgrid.js you@example.com therapist   # only the therapist-signup notification
- *   node src/scripts/testSendgrid.js you@example.com client      # only the client-signup notification
- *   node src/scripts/testSendgrid.js you@example.com plain       # a minimal sanity-check email (no template)
+ *   node src/scripts/testEmail.js                     # sends both signup notifications to ADMIN_NOTIFICATION_EMAIL
+ *   node src/scripts/testEmail.js you@example.com     # overrides the recipient
+ *   node src/scripts/testEmail.js you@example.com therapist   # only the therapist-signup notification
+ *   node src/scripts/testEmail.js you@example.com client      # only the client-signup notification
+ *   node src/scripts/testEmail.js you@example.com plain       # a minimal sanity-check email (no template)
  *
  * Verifies:
- *   - SENDGRID_API_KEY is set and accepted
- *   - FROM_EMAIL is verified in SendGrid (domain auth or single-sender)
+ *   - RESEND_API_KEY is set and accepted
+ *   - FROM_EMAIL is on a domain verified in Resend
  *   - The admin-signup template renders and delivers
  */
 
@@ -54,13 +54,13 @@ const clientExtras = {
 
 function preflight() {
   const problems = [];
-  if (!process.env.SENDGRID_API_KEY) {
-    problems.push('SENDGRID_API_KEY is not set — the script will log-only, no email will actually send.');
-  } else if (!process.env.SENDGRID_API_KEY.startsWith('SG.')) {
-    problems.push('SENDGRID_API_KEY does not start with "SG." — double-check the value.');
+  if (!process.env.RESEND_API_KEY) {
+    problems.push('RESEND_API_KEY is not set — the script will log-only, no email will actually send.');
+  } else if (!process.env.RESEND_API_KEY.startsWith('re_')) {
+    problems.push('RESEND_API_KEY does not start with "re_" — double-check the value.');
   }
   if (!process.env.FROM_EMAIL) {
-    problems.push('FROM_EMAIL not set — defaulting to noreply@rootedvoices.com (may not be verified in SendGrid).');
+    problems.push('FROM_EMAIL not set — defaulting to noreply@rootedvoices.com (may not be verified in Resend).');
   }
   if (!recipient || !recipient.includes('@')) {
     problems.push(`Recipient "${recipient}" does not look like an email address.`);
@@ -69,7 +69,7 @@ function preflight() {
 }
 
 async function run() {
-  console.log('─── SendGrid test ───');
+  console.log('─── Resend test ───');
   console.log(`Recipient:  ${recipient}`);
   console.log(`From:       ${process.env.FROM_EMAIL || 'noreply@rootedvoices.com'} (${process.env.FROM_NAME || 'Rooted Voices'})`);
   console.log(`Mode:       ${mode}`);
@@ -89,9 +89,9 @@ async function run() {
       label: 'plain sanity check',
       payload: {
         to: recipient,
-        subject: 'SendGrid test — plain',
-        text: 'If you received this, SendGrid is delivering from the Rooted Voices backend.',
-        html: '<p>If you received this, <strong>SendGrid is delivering</strong> from the Rooted Voices backend.</p>',
+        subject: 'Resend test — plain',
+        text: 'If you received this, Resend is delivering from the Rooted Voices backend.',
+        html: '<p>If you received this, <strong>Resend is delivering</strong> from the Rooted Voices backend.</p>',
       },
     });
   }
@@ -126,7 +126,7 @@ async function run() {
     process.stdout.write(`Sending ${s.label}… `);
     const result = await sendEmail(s.payload);
     if (result.success) {
-      console.log(`ok (status ${result.statusCode || 'n/a'})`);
+      console.log(`ok (id ${result.id || 'n/a'})`);
     } else {
       failed += 1;
       console.log(`FAILED — ${result.error}`);
@@ -135,7 +135,7 @@ async function run() {
 
   console.log('');
   if (failed === 0) {
-    console.log('All test emails accepted by SendGrid.');
+    console.log('All test emails accepted by Resend.');
     console.log(`Check the inbox of ${recipient} (and its spam folder) in the next minute or two.`);
     process.exit(0);
   } else {

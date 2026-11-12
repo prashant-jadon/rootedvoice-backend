@@ -11,7 +11,7 @@
     "lint": "eslint src/",
     "create-admin": "node src/scripts/createAdmin.js",
     "update-role": "node src/scripts/updateUserRole.js",
-    "test-sendgrid": "node src/scripts/testSendgrid.js"
+    "test-email": "node src/scripts/testEmail.js"
   },
   "keywords": [
     "healthcare",
@@ -23,7 +23,6 @@
   "license": "ISC",
   "dependencies": {
     "@google/generative-ai": "^0.21.0",
-    "@sendgrid/mail": "^8.1.6",
     "@vercel/blob": "^2.3.0",
     "axios": "^1.13.2",
     "bcryptjs": "^2.4.3",
@@ -46,6 +45,7 @@
     "node-cron": "^4.2.1",
     "nodemailer": "^6.9.7",
     "pdf-parse": "^2.4.5",
+    "resend": "^4.8.0",
     "socket.io": "^4.6.1",
     "stripe": "^19.3.1",
     "tesseract.js": "^6.0.1",

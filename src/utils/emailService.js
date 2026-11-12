@@ -1,9 +1,6 @@
-const sgMail = require('@sendgrid/mail');
+const { Resend } = require('resend');
 
-// Initialize SendGrid
-if (process.env.SENDGRID_API_KEY) {
-  sgMail.setApiKey(process.env.SENDGRID_API_KEY);
-}
+const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 
 const FROM_EMAIL = process.env.FROM_EMAIL || 'noreply@rootedvoices.com';
 const FROM_NAME = process.env.FROM_NAME || 'Rooted Voices';
@@ -11,29 +8,32 @@ const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
 const ADMIN_NOTIFICATION_EMAIL = process.env.ADMIN_NOTIFICATION_EMAIL || 'admin@rootedvoicestherapy.com';
 const ADMIN_PANEL_URL = process.env.ADMIN_PANEL_URL || 'http://localhost:5173';
 
-// Send email via SendGrid
 const sendEmail = async ({ to, subject, text, html }) => {
   try {
-    if (!process.env.SENDGRID_API_KEY) {
-      console.log('SendGrid not configured. Skipping email send.');
+    if (!resend) {
+      console.log('Resend not configured. Skipping email send.');
       console.log(`Would send to: ${to}, Subject: ${subject}`);
       return { success: true, message: 'Email service not configured (dev mode)' };
     }
 
-    const msg = {
-      to,
-      from: { email: FROM_EMAIL, name: FROM_NAME },
+    const { data, error } = await resend.emails.send({
+      from: `${FROM_NAME} <${FROM_EMAIL}>`,
+      to: Array.isArray(to) ? to : [to],
       subject,
       text: text || subject,
       html: html || text,
-    };
+    });
 
-    const result = await sgMail.send(msg);
-    console.log('Email sent via SendGrid:', result[0]?.statusCode);
-    return { success: true, statusCode: result[0]?.statusCode };
-  } catch (error) {
-    console.error('SendGrid email error:', error?.response?.body || error.message);
-    return { success: false, error: error.message };
+    if (error) {
+      console.error('Resend email error:', error);
+      return { success: false, error: error.message || String(error) };
+    }
+
+    console.log('Email sent via Resend:', data?.id);
+    return { success: true, id: data?.id };
+  } catch (err) {
+    console.error('Resend email exception:', err?.message || err);
+    return { success: false, error: err?.message || String(err) };
   }
 };
 
