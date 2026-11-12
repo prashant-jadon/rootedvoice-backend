@@ -60,7 +60,7 @@ function preflight() {
     problems.push('RESEND_API_KEY does not start with "re_" — double-check the value.');
   }
   if (!process.env.FROM_EMAIL) {
-    problems.push('FROM_EMAIL not set — defaulting to noreply@rootedvoices.com (may not be verified in Resend).');
+    problems.push('FROM_EMAIL not set — defaulting to noreply@rootedvoicestherapy.com (make sure the domain is verified in Resend).');
   }
   if (!recipient || !recipient.includes('@')) {
     problems.push(`Recipient "${recipient}" does not look like an email address.`);
@@ -71,7 +71,7 @@ function preflight() {
 async function run() {
   console.log('─── Resend test ───');
   console.log(`Recipient:  ${recipient}`);
-  console.log(`From:       ${process.env.FROM_EMAIL || 'noreply@rootedvoices.com'} (${process.env.FROM_NAME || 'Rooted Voices'})`);
+  console.log(`From:       ${process.env.FROM_EMAIL || 'noreply@rootedvoicestherapy.com'} (${process.env.FROM_NAME || 'Rooted Voices'})`);
   console.log(`Mode:       ${mode}`);
   console.log('');
 
